@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-streamlit_beta.py
+streamlit_beta.py - FIXED VERSION
 
 User-friendly Streamlit app for pottery studio business modeling.
-Designed for studio owners who need financial projections for SBA loans
-or business planning but aren't familiar with complex financial modeling.
+Fixed compatibility issues with Streamlit widgets.
 """
 
 import streamlit as st
@@ -376,7 +375,7 @@ def render_revenue_streams(config):
             config.events.attendee_range = [int(min_attendees), int(max_attendees)]
 
 def render_market_conditions(config):
-    """Render market conditions and economic environment"""
+    """Render market conditions and economic environment - FIXED VERSION"""
     st.subheader("Market Conditions")
     st.write("How your studio responds to market changes and economic conditions")
     
@@ -426,20 +425,32 @@ def render_market_conditions(config):
     
     with col2:
         st.write("**Economic Environment**")
-        economic_stress = st.select_slider(
+        
+        # FIXED: Replace select_slider with regular selectbox
+        economic_options = [
+            ("Normal", 0.05),
+            ("Moderate", 0.08),
+            ("Uncertain", 0.12),
+            ("Stressed", 0.18),
+            ("Recession", 0.30)
+        ]
+        
+        # Find current selection
+        current_prob = config.economic.downturn_prob_per_month
+        current_index = 1  # Default to Moderate
+        for i, (label, prob) in enumerate(economic_options):
+            if abs(prob - current_prob) < 0.01:
+                current_index = i
+                break
+        
+        selected_economic = st.selectbox(
             "Economic Stress Level",
-            options=[
-                ("Normal", 0.05),
-                ("Moderate", 0.08),
-                ("Uncertain", 0.12),
-                ("Stressed", 0.18),
-                ("Recession", 0.30)
-            ],
-            value=("Moderate", 0.08),
-            format_func=lambda x: x[0],
+            options=economic_options,
+            index=current_index,
+            format_func=lambda x: f"{x[0]} ({x[1]:.1%} monthly chance)",
             help="How often economic stress affects your business"
         )
-        config.economic.downturn_prob_per_month = economic_stress[1]
+        config.economic.downturn_prob_per_month = selected_economic[1]
         
         config.economic.downturn_join_multiplier = st.slider(
             "Economic Stress Impact on New Members",
@@ -601,7 +612,7 @@ def create_results_visualizations(results):
         with col1:
             st.write("**Cash Flow Risks**")
             st.write(f"• Never go negative: {risk_metrics['cash_never_negative_prob']:.1%}")
-            st.write(f"• Stay above $10k: {risk_metrics.get('cash_below_10k_prob', 0):.1%}")
+            st.write(f"• Stay above $10k: {(1-risk_metrics.get('cash_below_10k_prob', 0)):.1%}")
             st.write(f"• Minimum cash (10th percentile): ${risk_metrics['minimum_cash_p10']:,.0f}")
         
         with col2:
@@ -651,7 +662,7 @@ def main():
     
     if st.sidebar.button("Reset to Preset"):
         st.session_state.config = create_preset_config(preset_choice)
-        st.experimental_rerun()
+        st.rerun()
     
     # Parameter configuration based on mode
     if mode == "Quick Start":
