@@ -1,0 +1,2 @@
+scenario,rent,owner_draw,pct_insolvent_before_grant,median_op_break_even_month,median_final_cash_m60,median_min_cash,median_cfads_m12,median_cfads_m24,%_months_below_1_25,median_monthly_ds_revenue
+Beta_Test_Scenario,4500.0,2000.0,False,8,156807.89805249206,145451.76009024557,6947.713397050717,,0.35,0.0

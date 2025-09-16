@@ -1,0 +1,30 @@
+{
+  "MONTHS": 60,
+  "N_SIMULATIONS": 100,
+  "PRICE": 175,
+  "JOIN_PRICE_ELASTICITY": -0.6,
+  "CHURN_PRICE_ELASTICITY": 0.3,
+  "RENT_SCENARIOS": [
+    2500,
+    3500,
+    4500
+  ],
+  "OWNER_DRAW_SCENARIOS": [
+    0,
+    1000,
+    2000,
+    3000
+  ],
+  "DOWNTURN_PROB_PER_MONTH": null,
+  "DOWNTURN_JOIN_MULT": 0.65,
+  "DOWNTURN_CHURN_MULT": 1.5,
+  "MARKET_POOLS_INFLOW": {
+    "community_studio": 4,
+    "home_studio": 2,
+    "no_access": 3
+  },
+  "WOM_Q": 0.6,
+  "AWARENESS_RAMP_MONTHS": 4,
+  "HARD_CAP": null,
+  "CAPACITY_SOFT_CAP": null
+}
