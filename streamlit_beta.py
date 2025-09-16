@@ -159,116 +159,101 @@ PARAMETER_GROUPS = {
 # ==================== IMPROVED VISUALIZATION FUNCTIONS ====================
 
 def create_enhanced_cash_flow_chart(df_results):
-    """Create enhanced cash flow visualization with multiple perspectives"""
+    """Create enhanced cash flow visualization - FIXED VERSION"""
     
-    # Get cash flow data by month
-    cash_by_month = df_results.groupby('month')['cash_balance'].agg(['mean', 'median', 'std']).reset_index()
-    cash_percentiles = df_results.groupby('month')['cash_balance'].quantile([0.1, 0.25, 0.75, 0.9]).unstack()
-    
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=('Cash Flow Distribution Over Time', 'Cash Flow Risk Analysis', 
-                       'Monthly Cash Flow Changes', 'Survival Probability'),
-        specs=[[{"secondary_y": False}, {"secondary_y": False}],
-               [{"secondary_y": False}, {"secondary_y": False}]]
-    )
-    
-    # Main cash flow chart with confidence bands
-    fig.add_trace(
-        go.Scatter(x=cash_by_month['month'], y=cash_percentiles[0.9], 
-                  fill=None, mode='lines', line_color='rgba(0,100,80,0)', showlegend=False),
-        row=1, col=1
-    )
-    fig.add_trace(
-        go.Scatter(x=cash_by_month['month'], y=cash_percentiles[0.1],
-                  fill='tonexty', mode='lines', line_color='rgba(0,100,80,0)',
-                  name='10th-90th percentile', fillcolor='rgba(0,100,80,0.2)'),
-        row=1, col=1
-    )
-    fig.add_trace(
-        go.Scatter(x=cash_by_month['month'], y=cash_by_month['median'],
-                  mode='lines', name='Median', line=dict(color='blue', width=3)),
-        row=1, col=1
-    )
-    
-    # Risk analysis - probability of negative cash
-    risk_by_month = df_results.groupby('month').apply(
-        lambda x: (x['cash_balance'] < 0).mean()
-    ).reset_index(name='insolvency_prob')
-    
-    fig.add_trace(
-        go.Scatter(x=risk_by_month['month'], y=risk_by_month['insolvency_prob'],
-                  mode='lines+markers', name='Insolvency Risk', 
-                  line=dict(color='red', width=2)),
-        row=1, col=2
-    )
-    
-    # Monthly changes
-    cash_changes = df_results.groupby(['simulation_id', 'month'])['cash_balance'].first().groupby('simulation_id').diff()
-    change_stats = cash_changes.groupby(level=1).agg(['mean', 'std']).droplevel(0, axis=1)
-    
-    fig.add_trace(
-        go.Scatter(x=change_stats.index, y=change_stats['mean'],
-                  mode='lines', name='Avg Monthly Change', 
-                  line=dict(color='green', width=2)),
-        row=2, col=1
-    )
-    
-    # Survival probability over time
-    survival_by_month = df_results.groupby('month').apply(
-        lambda x: (x.groupby('simulation_id')['cash_balance'].min() >= 0).mean()
-    ).reset_index(name='survival_prob')
-    
-    fig.add_trace(
-        go.Scatter(x=survival_by_month['month'], y=survival_by_month['survival_prob'],
-                  mode='lines+markers', name='Survival Rate',
-                  line=dict(color='darkblue', width=3)),
-        row=2, col=2
-    )
-    
-    # Add insolvency line to main chart
-    fig.add_hline(y=0, line_dash="dash", line_color="red", 
-                 annotation_text="Insolvency Line", row=1, col=1)
-    
-    fig.update_layout(
-        height=800,
-        showlegend=True,
-        title_text="Enhanced Cash Flow Analysis",
-        title_x=0.5
-    )
-    
-    return fig
-
-def create_business_model_comparison(df_results):
-    """Compare different business model metrics"""
-    
-    # Calculate key business metrics
-    final_month = df_results['month'].max()
-    
-    # Revenue breakdown by source (if available)
-    revenue_cols = [col for col in df_results.columns if 'revenue' in col.lower()]
-    
-    if revenue_cols:
-        revenue_data = []
-        for col in revenue_cols:
-            total_revenue = df_results[df_results['month'] == final_month][col].sum()
-            revenue_data.append({
-                'source': col.replace('revenue_', '').replace('_', ' ').title(),
-                'amount': total_revenue
+    try:
+        # Safer column detection
+        cash_col = None
+        for col_name in ['cash_balance', 'cash', 'ending_cash']:
+            if col_name in df_results.columns:
+                cash_col = col_name
+                break
+        
+        if cash_col is None:
+            st.error("No cash balance column found in results")
+            return go.Figure()
+        
+        # Get cash flow data by month with safer aggregation
+        cash_by_month = df_results.groupby('month')[cash_col].agg(['mean', 'median', 'std']).reset_index()
+        
+        # Get percentiles safely
+        percentile_data = []
+        for month in df_results['month'].unique():
+            month_data = df_results[df_results['month'] == month][cash_col]
+            percentile_data.append({
+                'month': month,
+                'p10': month_data.quantile(0.1),
+                'p25': month_data.quantile(0.25), 
+                'p75': month_data.quantile(0.75),
+                'p90': month_data.quantile(0.9)
             })
         
-        revenue_df = pd.DataFrame(revenue_data)
+        percentiles_df = pd.DataFrame(percentile_data)
         
-        fig = make_subplots(
-            rows=1, cols=2,
-            subplot_titles=('Revenue by Source', 'Member Growth Trajectory'),
-            specs=[[{"type": "pie"}, {"type": "scatter"}]]
+        # Create single subplot for now to avoid complexity
+        fig = go.Figure()
+        
+        # Add confidence bands
+        fig.add_trace(go.Scatter(
+            x=percentiles_df['month'], 
+            y=percentiles_df['p90'],
+            fill=None, mode='lines', line_color='rgba(0,100,80,0)', 
+            showlegend=False
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=percentiles_df['month'], 
+            y=percentiles_df['p10'],
+            fill='tonexty', mode='lines', line_color='rgba(0,100,80,0)',
+            name='10th-90th percentile', fillcolor='rgba(0,100,80,0.2)'
+        ))
+        
+        # Add median line
+        fig.add_trace(go.Scatter(
+            x=cash_by_month['month'], 
+            y=cash_by_month['median'],
+            mode='lines', name='Median Cash', 
+            line=dict(color='blue', width=3)
+        ))
+        
+        # Add insolvency line
+        fig.add_hline(y=0, line_dash="dash", line_color="red", 
+                     annotation_text="Insolvency Line")
+        
+        fig.update_layout(
+            title="Cash Flow Over Time",
+            xaxis_title="Month",
+            yaxis_title="Cash Balance ($)",
+            height=400
         )
         
-        # Revenue pie chart
+        return fig
+        
+    except Exception as e:
+        st.error(f"Error creating cash flow chart: {e}")
+        return go.Figure()
+
+def create_business_model_comparison(df_results):
+    """Create business model comparison - SIMPLIFIED VERSION"""
+    
+    try:
+        fig = make_subplots(rows=1, cols=2, subplot_titles=('Key Metrics', 'Member Growth'))
+        
+        # Simple metrics bar chart
+        final_month = df_results['month'].max()
+        final_data = df_results[df_results['month'] == final_month]
+        
+        metrics = {
+            'Survival Rate': (final_data['cash_balance'] > 0).mean(),
+            'Median Cash ($k)': final_data['cash_balance'].median() / 1000
+        }
+        
+        # Add member count if available
+        if 'active_members' in df_results.columns:
+            metrics['Final Members'] = final_data['active_members'].median()
+        
         fig.add_trace(
-            go.Pie(labels=revenue_df['source'], values=revenue_df['amount'],
-                  name="Revenue Sources"),
+            go.Bar(x=list(metrics.keys()), y=list(metrics.values()), name="Key Metrics"),
             row=1, col=1
         )
         
@@ -277,77 +262,73 @@ def create_business_model_comparison(df_results):
             member_growth = df_results.groupby('month')['active_members'].median()
             fig.add_trace(
                 go.Scatter(x=member_growth.index, y=member_growth.values,
-                          mode='lines+markers', name='Median Members'),
+                          mode='lines+markers', name='Member Growth'),
                 row=1, col=2
             )
-    
-    return fig
+        
+        fig.update_layout(height=400, showlegend=False)
+        return fig
+        
+    except Exception as e:
+        st.error(f"Error creating business model chart: {e}")
+        return go.Figure()
 
 def create_risk_dashboard(df_results):
-    """Create comprehensive risk analysis dashboard"""
+    """Create risk dashboard - SIMPLIFIED VERSION"""
     
-    # Calculate various risk metrics
-    monthly_risks = df_results.groupby('month').agg({
-        'cash_balance': ['mean', 'std', lambda x: (x < 0).mean(), lambda x: (x < 10000).mean()],
-        'dscr': ['mean', 'std', lambda x: (x < 1.25).mean()] if 'dscr' in df_results.columns else [np.nan, np.nan, np.nan]
-    }).round(3)
-    
-    # Flatten column names
-    monthly_risks.columns = ['_'.join(col).strip() for col in monthly_risks.columns]
-    monthly_risks = monthly_risks.reset_index()
-    
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=('Cash Risk Over Time', 'DSCR Risk Profile', 
-                       'Risk Correlation Matrix', 'Monte Carlo Risk Distribution'),
-    )
-    
-    # Cash risk metrics
-    if 'cash_balance_<lambda_0>' in monthly_risks.columns:
-        fig.add_trace(
-            go.Scatter(x=monthly_risks['month'], 
-                      y=monthly_risks['cash_balance_<lambda_0>'] * 100,
-                      mode='lines+markers', name='Prob(Cash < $0)', 
-                      line=dict(color='red')),
-            row=1, col=1
+    try:
+        # Find cash column
+        cash_col = None
+        for col_name in ['cash_balance', 'cash', 'ending_cash']:
+            if col_name in df_results.columns:
+                cash_col = col_name
+                break
+        
+        if cash_col is None:
+            return go.Figure()
+        
+        # Calculate risk metrics safely
+        risk_data = []
+        for month in sorted(df_results['month'].unique()):
+            month_data = df_results[df_results['month'] == month][cash_col]
+            risk_data.append({
+                'month': month,
+                'prob_negative': (month_data < 0).mean(),
+                'prob_low_cash': (month_data < 10000).mean()
+            })
+        
+        risk_df = pd.DataFrame(risk_data)
+        
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=risk_df['month'], 
+            y=risk_df['prob_negative'] * 100,
+            mode='lines+markers', 
+            name='Probability of Negative Cash (%)',
+            line=dict(color='red')
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=risk_df['month'], 
+            y=risk_df['prob_low_cash'] * 100,
+            mode='lines+markers',
+            name='Probability of Low Cash (<$10k) (%)', 
+            line=dict(color='orange')
+        ))
+        
+        fig.update_layout(
+            title="Cash Flow Risk Over Time",
+            xaxis_title="Month",
+            yaxis_title="Risk Probability (%)",
+            height=400
         )
         
-        fig.add_trace(
-            go.Scatter(x=monthly_risks['month'], 
-                      y=monthly_risks['cash_balance_<lambda_1>'] * 100,
-                      mode='lines+markers', name='Prob(Cash < $10k)', 
-                      line=dict(color='orange')),
-            row=1, col=1
-        )
-    
-    # DSCR risk if available
-    if 'dscr' in df_results.columns and 'dscr_<lambda>' in monthly_risks.columns:
-        fig.add_trace(
-            go.Scatter(x=monthly_risks['month'], 
-                      y=monthly_risks['dscr_<lambda>'] * 100,
-                      mode='lines+markers', name='Prob(DSCR < 1.25)', 
-                      line=dict(color='purple')),
-            row=1, col=2
-        )
-    
-    # Risk distribution at final month
-    final_month_data = df_results[df_results['month'] == df_results['month'].max()]
-    
-    fig.add_trace(
-        go.Histogram(x=final_month_data['cash_balance'], 
-                    name='Final Cash Distribution',
-                    nbinsx=30),
-        row=2, col=2
-    )
-    
-    fig.update_layout(
-        height=800,
-        showlegend=True,
-        title_text="Risk Analysis Dashboard",
-        title_x=0.5
-    )
-    
-    return fig
+        return fig
+        
+    except Exception as e:
+        st.error(f"Error creating risk dashboard: {e}")
+        return go.Figure()
 
 # ==================== ENHANCED PARAMETER RENDERING ====================
 
