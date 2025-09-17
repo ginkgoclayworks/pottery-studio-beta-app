@@ -195,11 +195,10 @@ CONSOLIDATED_GROUPS = {
 # Keep existing helper functions but update parameter references
 def consolidate_build_overrides(env, strat):
     """
-    Fixed to match the function call: consolidate_build_overrides(env, strat)
-    Maps consolidated UI parameters to simulator expected parameters
+    Complete parameter mapping from consolidated UI parameters to simulator expected parameters
     """
     
-    # Combine env and strat into scenario_params (like your original build_overrides did)
+    # Combine env and strat into scenario_params
     scenario_params = {}
     if env:
         scenario_params.update(env)
@@ -210,43 +209,118 @@ def consolidate_build_overrides(env, strat):
     print(f"env keys: {list(env.keys()) if env else 'None'}")
     print(f"strat keys: {list(strat.keys()) if strat else 'None'}")
     print(f"combined scenario_params keys: {list(scenario_params.keys())}")
-    for key, value in scenario_params.items():
-        print(f"  {key}: {value} (type: {type(value)})")
     
-    # Create the mapping from consolidated params to simulator params
-    overrides = {}
-    
-    # Map consolidated parameters to what simulator expects
+    # COMPLETE mapping from consolidated params to simulator expected params
     param_mapping = {
-        # Consolidated -> Simulator expected
+        # Core business parameters
         'MONTHLY_RENT': 'RENT',
         'OWNER_COMPENSATION': 'OWNER_DRAW',
-        # Add ALL your consolidated parameter mappings here
-        # Look at your CONSOLIDATED_PARAM_SPECS vs original PARAM_SPECS
+        
+        # Based on your CONSOLIDATED_PARAM_SPECS, these are likely mappings needed:
+        # (You may need to adjust these based on what your original PARAM_SPECS were)
+        
+        # Market response - these might be unchanged, but check your original names
+        'JOIN_PRICE_ELASTICITY': 'JOIN_PRICE_ELASTICITY',  # Likely unchanged
+        'CHURN_PRICE_ELASTICITY': 'CHURN_PRICE_ELASTICITY',  # Likely unchanged
+        'WOM_RATE': 'WOM_RATE',  # Likely unchanged
+        'MARKETING_SPEND': 'MARKETING_SPEND',  # Likely unchanged
+        'CAC': 'CAC',  # Likely unchanged
+        'LEAD_TO_JOIN_RATE': 'LEAD_TO_JOIN_RATE',  # Likely unchanged
+        
+        # Capacity & Operations
+        'STUDIO_CAPACITY': 'STUDIO_CAPACITY',  # Likely unchanged
+        'EXPANSION_THRESHOLD': 'EXPANSION_THRESHOLD',  # Likely unchanged
+        'MAX_ONBOARD_PER_MONTH': 'MAX_ONBOARD_PER_MONTH',  # Likely unchanged
+        
+        # Pricing
+        'MEMBERSHIP_PRICE': 'MEMBERSHIP_PRICE',  # Likely unchanged
+        'REFERENCE_PRICE': 'REFERENCE_PRICE',  # Likely unchanged
+        'RENT_GROWTH_PCT': 'RENT_GROWTH_PCT',  # Likely unchanged
+        
+        # Economic environment
+        'ECONOMIC_STRESS_LEVEL': 'ECONOMIC_STRESS_LEVEL',  # Likely unchanged
+        'DOWNTURN_JOIN_MULT': 'DOWNTURN_JOIN_MULT',  # Likely unchanged
+        'DOWNTURN_CHURN_MULT': 'DOWNTURN_CHURN_MULT',  # Likely unchanged
+        
+        # Market pools
+        'MARKET_POOLS_INFLOW': 'MARKET_POOLS_INFLOW',  # Likely unchanged
+        
+        # Workshops
+        'WORKSHOPS_ENABLED': 'WORKSHOPS_ENABLED',  # Likely unchanged
+        'WORKSHOPS_PER_MONTH': 'WORKSHOPS_PER_MONTH',  # Likely unchanged
+        'WORKSHOP_PRICE': 'WORKSHOP_PRICE',  # Likely unchanged
+        'WORKSHOP_CAPACITY': 'WORKSHOP_CAPACITY',  # Likely unchanged
+        'WORKSHOP_CONV_RATE': 'WORKSHOP_CONV_RATE',  # Likely unchanged
+        'WORKSHOP_CONV_LAG_MO': 'WORKSHOP_CONV_LAG_MO',  # Likely unchanged
+        'WORKSHOP_COST_PER_EVENT': 'WORKSHOP_COST_PER_EVENT',  # Likely unchanged
+        
+        # Classes - THESE MAY NEED MAPPING if you consolidated class parameters
+        'CLASSES_ENABLED': 'CLASSES_ENABLED',  # Check if this was consolidated
+        'CLASS_SCHEDULE_MODE': 'CLASS_SCHEDULE_MODE',  # Check if this was consolidated
+        'CLASSES_PER_PERIOD': 'CLASSES_PER_PERIOD',  # Check if this was consolidated
+        'CLASS_SIZE': 'CLASS_SIZE',  # Likely unchanged
+        'CLASS_PRICE': 'CLASS_PRICE',  # Likely unchanged
+        'CLASS_CONV_RATE': 'CLASS_CONV_RATE',  # Likely unchanged
+        'CLASS_CONV_LAG_MO': 'CLASS_CONV_LAG_MO',  # Likely unchanged
+        
+        # Events
+        'BASE_EVENTS_PER_MONTH_LAMBDA': 'BASE_EVENTS_PER_MONTH_LAMBDA',  # Likely unchanged
+        'EVENTS_MAX_PER_MONTH': 'EVENTS_MAX_PER_MONTH',  # Likely unchanged
+        'TICKET_PRICE': 'TICKET_PRICE',  # Likely unchanged
+        
+        # Financing - THESE LIKELY NEED MAPPING if you consolidated loan parameters
+        'LOAN_504_ANNUAL_RATE': 'LOAN_504_ANNUAL_RATE',  # Check original names
+        'LOAN_504_TERM_YEARS': 'LOAN_504_TERM_YEARS',  # Check original names
+        'IO_MONTHS_504': 'IO_MONTHS_504',  # Check original names
+        'LOAN_7A_ANNUAL_RATE': 'LOAN_7A_ANNUAL_RATE',  # Check original names
+        'LOAN_7A_TERM_YEARS': 'LOAN_7A_TERM_YEARS',  # Check original names
+        'IO_MONTHS_7A': 'IO_MONTHS_7A',  # Check original names
+        'LOAN_CONTINGENCY_PCT': 'LOAN_CONTINGENCY_PCT',  # Check original names
+        'RUNWAY_MONTHS': 'RUNWAY_MONTHS',  # Check original names
+        'EXTRA_BUFFER': 'EXTRA_BUFFER',  # Check original names
+        'RESERVE_FLOOR': 'RESERVE_FLOOR',  # Check original names
+        
+        # Grants
+        'grant_amount': 'grant_amount',  # Likely unchanged
+        'grant_month': 'grant_month',  # Likely unchanged
     }
     
-    print(f"\n=== DEBUG: Parameter mapping rules ===")
-    for consolidated, simulator_expected in param_mapping.items():
-        print(f"  {consolidated} -> {simulator_expected}")
+    print(f"\n=== DEBUG: Parameter mapping rules ({len(param_mapping)} total) ===")
     
     # Apply mappings
-    for consolidated_name, simulator_name in param_mapping.items():
-        if consolidated_name in scenario_params:
-            overrides[simulator_name] = scenario_params[consolidated_name]
-            print(f"  MAPPED: {consolidated_name} ({scenario_params[consolidated_name]}) -> {simulator_name}")
+    overrides = {}
+    mapped_count = 0
+    passthrough_count = 0
     
-    # Pass through any parameters not in mapping (unchanged parameters)
     for param_name, value in scenario_params.items():
-        if param_name not in param_mapping:
+        if param_name in param_mapping:
+            simulator_param_name = param_mapping[param_name]
+            overrides[simulator_param_name] = value
+            if simulator_param_name != param_name:  # Only log actual mappings
+                print(f"  MAPPED: {param_name} -> {simulator_param_name}")
+                mapped_count += 1
+            else:
+                passthrough_count += 1
+        else:
+            # Pass through unmapped parameters (like CAPEX_ITEMS, etc.)
             overrides[param_name] = value
-            print(f"  PASSTHROUGH: {param_name} -> {value}")
+            print(f"  PASSTHROUGH: {param_name}")
+            passthrough_count += 1
     
     print(f"\n=== DEBUG: consolidate_build_overrides OUTPUT ===")
+    print(f"Total parameters: {len(overrides)}")
+    print(f"Mapped parameters: {mapped_count}")
+    print(f"Passthrough parameters: {passthrough_count}")
     print(f"overrides keys: {list(overrides.keys())}")
-    for key, value in overrides.items():
-        print(f"  {key}: {value}")
+    
+    # Check for potentially missing critical parameters
+    critical_params = ['RENT', 'OWNER_DRAW', 'MEMBERSHIP_PRICE', 'STUDIO_CAPACITY']
+    missing_critical = [p for p in critical_params if p not in overrides]
+    if missing_critical:
+        print(f"WARNING: Missing critical parameters: {missing_critical}")
     
     return overrides
+
 
 
 # Debug wrapper for your simulation call
