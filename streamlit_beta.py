@@ -193,14 +193,23 @@ CONSOLIDATED_GROUPS = {
 }
 
 # Keep existing helper functions but update parameter references
-# Debug version of consolidate_build_overrides with extensive logging
-
-def consolidate_build_overrides(scenario_params):
+def consolidate_build_overrides(env, strat):
     """
-    Debug version: Maps consolidated UI parameters to simulator expected parameters
+    Fixed to match the function call: consolidate_build_overrides(env, strat)
+    Maps consolidated UI parameters to simulator expected parameters
     """
+    
+    # Combine env and strat into scenario_params (like your original build_overrides did)
+    scenario_params = {}
+    if env:
+        scenario_params.update(env)
+    if strat:
+        scenario_params.update(strat)
+    
     print("=== DEBUG: consolidate_build_overrides INPUT ===")
-    print(f"scenario_params keys: {list(scenario_params.keys())}")
+    print(f"env keys: {list(env.keys()) if env else 'None'}")
+    print(f"strat keys: {list(strat.keys()) if strat else 'None'}")
+    print(f"combined scenario_params keys: {list(scenario_params.keys())}")
     for key, value in scenario_params.items():
         print(f"  {key}: {value} (type: {type(value)})")
     
@@ -211,8 +220,9 @@ def consolidate_build_overrides(scenario_params):
     param_mapping = {
         # Consolidated -> Simulator expected
         'MONTHLY_RENT': 'RENT',
-        'OWNER_COMPENSATION': 'OWNER_DRAW',  # or whatever the simulator expects
-        # Add other mappings here based on your consolidation
+        'OWNER_COMPENSATION': 'OWNER_DRAW',
+        # Add ALL your consolidated parameter mappings here
+        # Look at your CONSOLIDATED_PARAM_SPECS vs original PARAM_SPECS
     }
     
     print(f"\n=== DEBUG: Parameter mapping rules ===")
