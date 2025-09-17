@@ -826,6 +826,88 @@ def run_cell_cached(env: dict, strat: dict, seed: int, cache_key: Optional[str] 
         
     return df_cell, eff, cap.images, cap.manifest
 
+
+def patch_heatmap_calls():
+    """
+    Monkey patch to fix heatmap issues - call this before running simulations
+    """
+    import seaborn as sns
+    import numpy as np
+    import matplotlib.pyplot as plt
+    
+    original_heatmap = sns.heatmap
+    
+    def safe_heatmap_wrapper(data, **kwargs):
+        # Quick validation
+        if hasattr(data, 'values'):
+            data_array = data.values
+        else:
+            data_array = np.array(data)
+        
+        if data_array.size == 0 or np.isnan(data_array).all():
+            print("Skipping invalid heatmap data")
+            plt.figure(figsize=(6, 4))
+            plt.text(0.5, 0.5, 'Invalid heatmap data', 
+                    ha='center', va='center', transform=plt.gca().transAxes)
+            return plt.gca()
+        
+        return original_heatmap(data, **kwargs)
+    
+    sns.heatmap = safe_heatmap_wrapper
+    
+def safe_heatmap(data, **kwargs):
+    """
+    Safely create heatmap, handling empty or invalid data
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    # Convert to numpy array if it's a DataFrame
+    if hasattr(data, 'values'):
+        data_array = data.values
+    else:
+        data_array = np.array(data)
+    
+    # Check if data is valid for heatmap
+    if data_array.size == 0:
+        print("WARNING: Empty data for heatmap, skipping...")
+        plt.figure(figsize=(6, 4))
+        plt.text(0.5, 0.5, 'No data available for heatmap', 
+                ha='center', va='center', transform=plt.gca().transAxes)
+        plt.title(kwargs.get('title', 'Empty Heatmap'))
+        return plt.gca()
+    
+    # Check for all NaN values
+    if np.isnan(data_array).all():
+        print("WARNING: All NaN data for heatmap, skipping...")
+        plt.figure(figsize=(6, 4))
+        plt.text(0.5, 0.5, 'All data is NaN', 
+                ha='center', va='center', transform=plt.gca().transAxes)
+        plt.title(kwargs.get('title', 'Invalid Heatmap Data'))
+        return plt.gca()
+    
+    # Check for valid numeric range
+    valid_data = data_array[~np.isnan(data_array)]
+    if len(valid_data) == 0:
+        print("WARNING: No valid numeric data for heatmap, skipping...")
+        plt.figure(figsize=(6, 4))
+        plt.text(0.5, 0.5, 'No valid numeric data', 
+                ha='center', va='center', transform=plt.gca().transAxes)
+        plt.title(kwargs.get('title', 'No Valid Data'))
+        return plt.gca()
+    
+    # If we have valid data, create the heatmap
+    try:
+        return sns.heatmap(data, **kwargs)
+    except Exception as e:
+        print(f"ERROR creating heatmap: {e}")
+        plt.figure(figsize=(6, 4))
+        plt.text(0.5, 0.5, f'Heatmap error: {str(e)}', 
+                ha='center', va='center', transform=plt.gca().transAxes)
+        plt.title(kwargs.get('title', 'Heatmap Error'))
+        return plt.gca()
+
 # Keep your existing summarize_cell and other analysis functions
 def summarize_cell(df: pd.DataFrame) -> Tuple[dict, pd.DataFrame]:
     """Your existing cell summary function"""
