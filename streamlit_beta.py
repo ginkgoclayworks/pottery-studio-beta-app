@@ -205,11 +205,6 @@ def consolidate_build_overrides(env, strat):
     if strat:
         scenario_params.update(strat)
     
-    print("=== DEBUG: consolidate_build_overrides INPUT ===")
-    print(f"env keys: {list(env.keys()) if env else 'None'}")
-    print(f"strat keys: {list(strat.keys()) if strat else 'None'}")
-    print(f"combined scenario_params keys: {list(scenario_params.keys())}")
-    
     # COMPLETE mapping from consolidated params to simulator expected params
     param_mapping = {
         # Core business parameters
@@ -778,8 +773,6 @@ def run_cell_cached(env: dict, strat: dict, seed: int, cache_key: Optional[str] 
         cache_key = f"v6|{json.dumps(env, sort_keys=True)}|{json.dumps(strat, sort_keys=True)}|{seed}"
 
     ov = consolidate_build_overrides(env, strat)
-    st.write("DEBUG - Parameters generated:")
-    st.write({k: v for k, v in ov.items() if not k.startswith('CAPEX')})
     ov["RANDOM_SEED"] = seed
 
     title_suffix = f"{env['name']} | {strat['name']}"
@@ -790,11 +783,9 @@ def run_cell_cached(env: dict, strat: dict, seed: int, cache_key: Optional[str] 
     with FigureCapture(title_suffix) as cap:
         try:
             res = run_original_once("modular_simulator.py", ov)
-            st.write("DEBUG - Simulation result type:", type(res))
+            
             if isinstance(res, tuple):
                 df = res[0] if res[0] is not None else pd.DataFrame()
-                st.write("DEBUG - DataFrame shape:", df.shape)
-                st.write("DEBUG - DataFrame columns:", list(df.columns) if not df.empty else "Empty")
                 
                 # Validate the dataframe before proceeding
                 if df.empty:
