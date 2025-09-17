@@ -682,12 +682,18 @@ def run_cell_cached(env: dict, strat: dict, seed: int, cache_key: Optional[str] 
         cache_key = f"v6|{json.dumps(env, sort_keys=True)}|{json.dumps(strat, sort_keys=True)}|{seed}"
 
     ov = consolidate_build_overrides(env, strat)  # Use consolidated function
+    st.write("DEBUG - Parameters generated:")
+    st.write({k: v for k, v in ov.items() if not k.startswith('CAPEX')})  # Show key params
     ov["RANDOM_SEED"] = seed
 
     title_suffix = f"{env['name']} | {strat['name']}"
     with FigureCapture(title_suffix) as cap:
         try:
             res = run_original_once("modular_simulator.py", ov)
+            st.write("DEBUG - Simulation result type:", type(res))
+            if isinstance(res, tuple):
+                st.write("DEBUG - DataFrame shape:", res[0].shape if res[0] is not None else "None")
+                st.write("DEBUG - DataFrame columns:", list(res[0].columns) if res[0] is not None else "None")
         except Exception as e:
             st.error(f"Simulation failed: {e}")
             st.exception(e)
