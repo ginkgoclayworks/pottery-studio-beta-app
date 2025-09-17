@@ -771,23 +771,42 @@ class FigureCapture:
 
 @st.cache_data(show_spinner=False)
 def run_cell_cached(env: dict, strat: dict, seed: int, cache_key: Optional[str] = None):
-    """Your existing cached simulation runner"""
+    """
+    Enhanced version of run_cell_cached with better error handling
+    """
     if cache_key is None:
         cache_key = f"v6|{json.dumps(env, sort_keys=True)}|{json.dumps(strat, sort_keys=True)}|{seed}"
 
-    ov = consolidate_build_overrides(env, strat)  # Use consolidated function
+    ov = consolidate_build_overrides(env, strat)
     st.write("DEBUG - Parameters generated:")
-    st.write({k: v for k, v in ov.items() if not k.startswith('CAPEX')})  # Show key params
+    st.write({k: v for k, v in ov.items() if not k.startswith('CAPEX')})
     ov["RANDOM_SEED"] = seed
 
     title_suffix = f"{env['name']} | {strat['name']}"
+    
+    # Apply the heatmap patch before visualization
+    patch_heatmap_calls()
+    
     with FigureCapture(title_suffix) as cap:
         try:
             res = run_original_once("modular_simulator.py", ov)
             st.write("DEBUG - Simulation result type:", type(res))
             if isinstance(res, tuple):
-                st.write("DEBUG - DataFrame shape:", res[0].shape if res[0] is not None else "None")
-                st.write("DEBUG - DataFrame columns:", list(res[0].columns) if res[0] is not None else "None")
+                df = res[0] if res[0] is not None else pd.DataFrame()
+                st.write("DEBUG - DataFrame shape:", df.shape)
+                st.write("DEBUG - DataFrame columns:", list(df.columns) if not df.empty else "Empty")
+                
+                # Validate the dataframe before proceeding
+                if df.empty:
+                    st.warning("Simulation returned empty DataFrame")
+                    return pd.DataFrame(), None, [], []
+                    
+                # Check for critical columns
+                required_cols = ['month', 'cash_balance']
+                missing_cols = [col for col in required_cols if col not in df.columns]
+                if missing_cols:
+                    st.warning(f"Missing required columns: {missing_cols}")
+                
         except Exception as e:
             st.error(f"Simulation failed: {e}")
             st.exception(e)
@@ -795,11 +814,16 @@ def run_cell_cached(env: dict, strat: dict, seed: int, cache_key: Optional[str] 
 
     df_cell, eff = (res if isinstance(res, tuple) else (res, None))
 
+    if df_cell is None or df_cell.empty:
+        st.warning("No data returned from simulation")
+        return pd.DataFrame(), None, cap.images, cap.manifest
+
     df_cell = df_cell.copy()
     df_cell["environment"] = env["name"]
-    df_cell["strategy"]    = strat["name"]
+    df_cell["strategy"] = strat["name"]
     if "simulation_id" not in df_cell.columns:
         df_cell["simulation_id"] = 0
+        
     return df_cell, eff, cap.images, cap.manifest
 
 # Keep your existing summarize_cell and other analysis functions
