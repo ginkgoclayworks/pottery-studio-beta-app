@@ -194,7 +194,7 @@ CONSOLIDATED_GROUPS = {
 
 # Keep existing helper functions but update parameter references
 def consolidate_build_overrides(env: dict, strat: dict) -> dict:
-    """CLEANED UP: Build overrides with consolidated parameters"""
+    """FIXED: Build overrides with consolidated parameters"""
     import math
     ov: dict = {}
 
@@ -211,16 +211,18 @@ def consolidate_build_overrides(env: dict, strat: dict) -> dict:
     _merge_clean(env)
     _merge_clean(strat)
 
-    # CONSOLIDATED MAPPINGS - Single source of truth
+    # CONSOLIDATED MAPPINGS - Fix array handling
     
     # Core business parameters
     if "MONTHLY_RENT" in ov:
-        ov["RENT"] = ov.pop("MONTHLY_RENT")
-        ov["RENT_SCENARIOS"] = np.array([float(ov["RENT"])], dtype=float)
+        rent_val = float(ov.pop("MONTHLY_RENT"))
+        ov["RENT"] = rent_val
+        ov["RENT_SCENARIOS"] = np.array([rent_val], dtype=float)
     
     if "OWNER_COMPENSATION" in ov:
-        ov["OWNER_DRAW"] = ov.pop("OWNER_COMPENSATION")
-        ov["OWNER_DRAW_SCENARIOS"] = [float(ov["OWNER_DRAW"])]
+        owner_val = float(ov.pop("OWNER_COMPENSATION"))
+        ov["OWNER_DRAW"] = owner_val
+        ov["OWNER_DRAW_SCENARIOS"] = [owner_val]
     
     if "MEMBERSHIP_PRICE" in ov:
         ov["PRICE"] = ov.pop("MEMBERSHIP_PRICE")
@@ -255,24 +257,36 @@ def consolidate_build_overrides(env: dict, strat: dict) -> dict:
     if "CLASS_SIZE" in ov:
         ov["CLASS_CAP_PER_COHORT"] = ov.pop("CLASS_SIZE")
     
-    # Economic environment
+    # Economic environment - fix tuple handling
     if "ECONOMIC_STRESS_LEVEL" in ov:
         stress_level = ov.pop("ECONOMIC_STRESS_LEVEL")
-        if isinstance(stress_level, tuple):
-            ov["DOWNTURN_PROB_PER_MONTH"] = stress_level[1]
+        if isinstance(stress_level, tuple) and len(stress_level) >= 2:
+            ov["DOWNTURN_PROB_PER_MONTH"] = float(stress_level[1])
         elif isinstance(stress_level, (int, float)):
-            ov["DOWNTURN_PROB_PER_MONTH"] = stress_level
+            ov["DOWNTURN_PROB_PER_MONTH"] = float(stress_level)
+        else:
+            ov["DOWNTURN_PROB_PER_MONTH"] = 0.08  # Default fallback
     
     # Legacy alias mappings
     alias_mappings = {
         "WOM_RATE": "WOM_Q",
-        "MAX_ONBOARD_PER_MONTH": "MAX_ONBOARDINGS_PER_MONTH",
+        "MAX_ONBOARD_PER_MONTH": "MAX_ONBOARDINGS_PER_MONTH", 
         "LEAD_TO_JOIN_RATE": "BASELINE_JOIN_RATE"
     }
     
     for new_name, old_name in alias_mappings.items():
         if new_name in ov and old_name not in ov:
             ov[old_name] = ov.pop(new_name)
+    
+    # Grant handling - fix None conversion
+    if "grant_month" in ov:
+        gm = ov["grant_month"]
+        if isinstance(gm, (int, np.integer)) and gm < 0:
+            ov["grant_month"] = None
+        elif gm is None or gm == "":
+            ov["grant_month"] = None
+        else:
+            ov["grant_month"] = int(gm)
     
     # Scenario configuration
     sc_name = env.get("name", "Scenario")
@@ -289,39 +303,52 @@ def consolidate_build_overrides(env: dict, strat: dict) -> dict:
     except Exception:
         pass
 
-    # --- Independent loan modes ---
-    ov["CAPEX_LOAN_MODE"] = st.session_state.get("capex_mode", "upfront")
-    ov["OPEX_LOAN_MODE"]  = st.session_state.get("opex_mode",  "upfront")
+    # --- Independent loan modes (from session state) ---
+    try:
+        ov["CAPEX_LOAN_MODE"] = st.session_state.get("capex_mode", "upfront")
+        ov["OPEX_LOAN_MODE"]  = st.session_state.get("opex_mode",  "upfront")
+        
+        # Upfront overrides
+        val_504 = st.session_state.get("loan_504", None)
+        if val_504 not in (None, "", 0, 0.0):
+            ov["LOAN_OVERRIDE_504"] = float(val_504)
+        
+        val_7a = st.session_state.get("loan_7a", None)
+        if val_7a not in (None, "", 0, 0.0):
+            ov["LOAN_OVERRIDE_7A"] = float(val_7a)
+        
+        # Staged rules
+        if ov["CAPEX_LOAN_MODE"] == "staged":
+            ov["LOAN_STAGED_RULE"] = {
+                "draw_pct_of_purchase": float(st.session_state.get("capex_draw_pct", 1.0)),
+                "min_tranche": float(st.session_state.get("capex_min_tr", 0.0)),
+                "max_tranche": (None if (st.session_state.get("capex_max_tr", 0)==0) else float(st.session_state["capex_max_tr"])),
+            }
+        if ov["OPEX_LOAN_MODE"] == "staged":
+            ov["LOAN_STAGED_RULE_OPEX"] = {
+                "facility_limit": float(st.session_state.get("opex_facility", 0.0)),
+                "min_draw": float(st.session_state.get("opex_min_tr", 0.0)),
+                "max_draw": (None if (st.session_state.get("opex_max_tr", 0)==0) else float(st.session_state["opex_max_tr"])),
+                "reserve_floor": float(st.session_state.get("reserve_floor", 0.0)),
+            }
+    except Exception:
+        # Fallback if session_state not available
+        ov["CAPEX_LOAN_MODE"] = "upfront"
+        ov["OPEX_LOAN_MODE"] = "upfront"
     
-    # Upfront overrides
-    val_504 = st.session_state.get("loan_504", None)
-    if val_504 not in (None, "", 0, 0.0):
-        ov["LOAN_OVERRIDE_504"] = float(val_504)
-    
-    val_7a = st.session_state.get("loan_7a", None)
-    if val_7a not in (None, "", 0, 0.0):
-        ov["LOAN_OVERRIDE_7A"] = float(val_7a)
-    
-    # Staged rules
-    if ov["CAPEX_LOAN_MODE"] == "staged":
-        ov["LOAN_STAGED_RULE"] = {
-            "draw_pct_of_purchase": float(st.session_state.get("capex_draw_pct", 1.0)),
-            "min_tranche": float(st.session_state.get("capex_min_tr", 0.0)),
-            "max_tranche": (None if (st.session_state.get("capex_max_tr", 0)==0) else float(st.session_state["capex_max_tr"])),
-        }
-    if ov["OPEX_LOAN_MODE"] == "staged":
-        ov["LOAN_STAGED_RULE_OPEX"] = {
-            "facility_limit": float(st.session_state.get("opex_facility", 0.0)),
-            "min_draw": float(st.session_state.get("opex_min_tr", 0.0)),
-            "max_draw": (None if (st.session_state.get("opex_max_tr", 0)==0) else float(st.session_state["opex_max_tr"])),
-            "reserve_floor": float(st.session_state.get("reserve_floor", 0.0)),
-        }
-    
-    # Defaults
+    # Ensure required defaults with proper types
     ov.setdefault("WORKSHOPS_ENABLED", True)
     ov.setdefault("WORKSHOP_COST_PER_EVENT", 50.0)
     ov.setdefault("CLASSES_ENABLED", True)
-
+    ov.setdefault("MARKET_POOLS_INFLOW", {"community_studio": 4, "home_studio": 2, "no_access": 3})
+    
+    # Ensure all numeric values are properly typed
+    for key, value in ov.items():
+        if isinstance(value, np.integer):
+            ov[key] = int(value)
+        elif isinstance(value, np.floating):
+            ov[key] = float(value)
+    
     return ov
 
 def render_consolidated_parameter_group(group_name, group_config, params_state, prefix=""):
