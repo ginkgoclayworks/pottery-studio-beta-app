@@ -193,163 +193,173 @@ CONSOLIDATED_GROUPS = {
 }
 
 # Keep existing helper functions but update parameter references
-def consolidate_build_overrides(env: dict, strat: dict) -> dict:
-    """FIXED: Build overrides with consolidated parameters"""
-    import math
-    ov: dict = {}
+# Debug version of consolidate_build_overrides with extensive logging
 
-    META_SKIP = {"name", "grant_month", "grant_amount"}
-
-    def _merge_clean(src: dict):
-        for k, v in (src or {}).items():
-            if k in META_SKIP:
-                continue
-            if v is None or (isinstance(v, float) and math.isnan(v)):
-                continue
-            ov[k] = v
-
-    _merge_clean(env)
-    _merge_clean(strat)
-
-    # CONSOLIDATED MAPPINGS - Fix array handling
+def consolidate_build_overrides(scenario_params):
+    """
+    Debug version: Maps consolidated UI parameters to simulator expected parameters
+    """
+    print("=== DEBUG: consolidate_build_overrides INPUT ===")
+    print(f"scenario_params keys: {list(scenario_params.keys())}")
+    for key, value in scenario_params.items():
+        print(f"  {key}: {value} (type: {type(value)})")
     
-    # Core business parameters
-    if "MONTHLY_RENT" in ov:
-        rent_val = float(ov.pop("MONTHLY_RENT"))
-        ov["RENT"] = rent_val
-        ov["RENT_SCENARIOS"] = np.array([rent_val], dtype=float)
+    # Create the mapping from consolidated params to simulator params
+    overrides = {}
     
-    if "OWNER_COMPENSATION" in ov:
-        owner_val = float(ov.pop("OWNER_COMPENSATION"))
-        ov["OWNER_DRAW"] = owner_val
-        ov["OWNER_DRAW_SCENARIOS"] = [owner_val]
-    
-    if "MEMBERSHIP_PRICE" in ov:
-        ov["PRICE"] = ov.pop("MEMBERSHIP_PRICE")
-    
-    if "STUDIO_CAPACITY" in ov:
-        capacity = int(ov.pop("STUDIO_CAPACITY"))
-        if capacity > 0:
-            ov["MAX_MEMBERS"] = capacity
-        ov["MEMBER_CAP"] = capacity
-    
-    # Workshop parameters
-    if "WORKSHOP_PRICE" in ov:
-        ov["WORKSHOP_FEE"] = ov.pop("WORKSHOP_PRICE")
-    if "WORKSHOP_CAPACITY" in ov:
-        ov["WORKSHOP_AVG_ATTENDANCE"] = ov.pop("WORKSHOP_CAPACITY")
-    
-    # Class parameters - handle consolidated scheduling
-    if "CLASS_SCHEDULE_MODE" in ov and "CLASSES_PER_PERIOD" in ov:
-        mode = ov.pop("CLASS_SCHEDULE_MODE")
-        classes_per_period = int(ov.pop("CLASSES_PER_PERIOD"))
-        
-        if mode == "semester":
-            ov["USE_SEMESTER_SCHEDULE"] = True
-            ov["CLASSES_PER_SEMESTER"] = classes_per_period
-            ov["CLASSES_CALENDAR_MODE"] = "semester"
-            ov["CLASS_COHORTS_PER_MONTH"] = max(0, int(math.ceil(classes_per_period / 3.0)))
-        else:
-            ov["USE_SEMESTER_SCHEDULE"] = False
-            ov["CLASSES_CALENDAR_MODE"] = "monthly"
-            ov["CLASS_COHORTS_PER_MONTH"] = classes_per_period
-    
-    if "CLASS_SIZE" in ov:
-        ov["CLASS_CAP_PER_COHORT"] = ov.pop("CLASS_SIZE")
-    
-    # Economic environment - fix tuple handling
-    if "ECONOMIC_STRESS_LEVEL" in ov:
-        stress_level = ov.pop("ECONOMIC_STRESS_LEVEL")
-        if isinstance(stress_level, tuple) and len(stress_level) >= 2:
-            ov["DOWNTURN_PROB_PER_MONTH"] = float(stress_level[1])
-        elif isinstance(stress_level, (int, float)):
-            ov["DOWNTURN_PROB_PER_MONTH"] = float(stress_level)
-        else:
-            ov["DOWNTURN_PROB_PER_MONTH"] = 0.08  # Default fallback
-    
-    # Legacy alias mappings
-    alias_mappings = {
-        "WOM_RATE": "WOM_Q",
-        "MAX_ONBOARD_PER_MONTH": "MAX_ONBOARDINGS_PER_MONTH", 
-        "LEAD_TO_JOIN_RATE": "BASELINE_JOIN_RATE"
+    # Map consolidated parameters to what simulator expects
+    param_mapping = {
+        # Consolidated -> Simulator expected
+        'MONTHLY_RENT': 'RENT',
+        'OWNER_COMPENSATION': 'OWNER_DRAW',  # or whatever the simulator expects
+        # Add other mappings here based on your consolidation
     }
     
-    for new_name, old_name in alias_mappings.items():
-        if new_name in ov and old_name not in ov:
-            ov[old_name] = ov.pop(new_name)
+    print(f"\n=== DEBUG: Parameter mapping rules ===")
+    for consolidated, simulator_expected in param_mapping.items():
+        print(f"  {consolidated} -> {simulator_expected}")
     
-    # Grant handling - fix None conversion
-    if "grant_month" in ov:
-        gm = ov["grant_month"]
-        if isinstance(gm, (int, np.integer)) and gm < 0:
-            ov["grant_month"] = None
-        elif gm is None or gm == "":
-            ov["grant_month"] = None
-        else:
-            ov["grant_month"] = int(gm)
+    # Apply mappings
+    for consolidated_name, simulator_name in param_mapping.items():
+        if consolidated_name in scenario_params:
+            overrides[simulator_name] = scenario_params[consolidated_name]
+            print(f"  MAPPED: {consolidated_name} ({scenario_params[consolidated_name]}) -> {simulator_name}")
     
-    # Scenario configuration
-    sc_name = env.get("name", "Scenario")
-    ov["SCENARIO_CONFIGS"] = [{
-        "name": sc_name,
-        "grant_amount": float(ov.get("grant_amount", 0.0)),
-        "grant_month": ov.get("grant_month", None),
-    }]
+    # Pass through any parameters not in mapping (unchanged parameters)
+    for param_name, value in scenario_params.items():
+        if param_name not in param_mapping:
+            overrides[param_name] = value
+            print(f"  PASSTHROUGH: {param_name} -> {value}")
     
-    # Forward staged CapEx schedule if present
-    try:
-        if strat.get("CAPEX_ITEMS"):
-            ov["CAPEX_ITEMS"] = list(strat.get("CAPEX_ITEMS", []))
-    except Exception:
-        pass
+    print(f"\n=== DEBUG: consolidate_build_overrides OUTPUT ===")
+    print(f"overrides keys: {list(overrides.keys())}")
+    for key, value in overrides.items():
+        print(f"  {key}: {value}")
+    
+    return overrides
 
-    # --- Independent loan modes (from session state) ---
+
+# Debug wrapper for your simulation call
+def debug_simulation_call(scenario_params):
+    """
+    Wrap your simulation call with debugging
+    """
+    print("\n" + "="*50)
+    print("DEBUGGING SIMULATION CALL")
+    print("="*50)
+    
+    # Step 1: Debug parameter consolidation
+    overrides = consolidate_build_overrides(scenario_params)
+    
+    # Step 2: Debug what gets passed to simulator
+    print(f"\n=== CALLING SIMULATOR WITH ===")
+    print(f"overrides: {overrides}")
+    
     try:
-        ov["CAPEX_LOAN_MODE"] = st.session_state.get("capex_mode", "upfront")
-        ov["OPEX_LOAN_MODE"]  = st.session_state.get("opex_mode",  "upfront")
+        # Replace this with your actual simulator call
+        # results = your_simulator_function(overrides)
         
-        # Upfront overrides
-        val_504 = st.session_state.get("loan_504", None)
-        if val_504 not in (None, "", 0, 0.0):
-            ov["LOAN_OVERRIDE_504"] = float(val_504)
+        # For debugging, let's see what modular_simulator expects
+        print(f"\n=== CHECKING SIMULATOR EXPECTATIONS ===")
+        # You'll need to check what parameters modular_simulator.py actually expects
+        # Look for parameter names in modular_simulator.py
         
-        val_7a = st.session_state.get("loan_7a", None)
-        if val_7a not in (None, "", 0, 0.0):
-            ov["LOAN_OVERRIDE_7A"] = float(val_7a)
+        # Simulate the call (replace with actual)
+        # results = run_simulation_with_overrides(overrides)
         
-        # Staged rules
-        if ov["CAPEX_LOAN_MODE"] == "staged":
-            ov["LOAN_STAGED_RULE"] = {
-                "draw_pct_of_purchase": float(st.session_state.get("capex_draw_pct", 1.0)),
-                "min_tranche": float(st.session_state.get("capex_min_tr", 0.0)),
-                "max_tranche": (None if (st.session_state.get("capex_max_tr", 0)==0) else float(st.session_state["capex_max_tr"])),
-            }
-        if ov["OPEX_LOAN_MODE"] == "staged":
-            ov["LOAN_STAGED_RULE_OPEX"] = {
-                "facility_limit": float(st.session_state.get("opex_facility", 0.0)),
-                "min_draw": float(st.session_state.get("opex_min_tr", 0.0)),
-                "max_draw": (None if (st.session_state.get("opex_max_tr", 0)==0) else float(st.session_state["opex_max_tr"])),
-                "reserve_floor": float(st.session_state.get("reserve_floor", 0.0)),
-            }
-    except Exception:
-        # Fallback if session_state not available
-        ov["CAPEX_LOAN_MODE"] = "upfront"
-        ov["OPEX_LOAN_MODE"] = "upfront"
+        print(f"Simulation would be called with these parameters:")
+        for key, value in overrides.items():
+            print(f"  {key}: {value}")
+            
+        # Check if results would be empty
+        # if results is None or len(results) == 0:
+        #     print("WARNING: Simulator returned empty results!")
+        #     return None
+            
+        return overrides  # Return for inspection
+        
+    except Exception as e:
+        print(f"ERROR in simulation: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+# Function to check what modular_simulator.py expects
+def check_simulator_expectations():
+    """
+    Debug function to check what parameters the simulator actually expects
+    """
+    print("\n=== CHECKING SIMULATOR PARAMETER EXPECTATIONS ===")
     
-    # Ensure required defaults with proper types
-    ov.setdefault("WORKSHOPS_ENABLED", True)
-    ov.setdefault("WORKSHOP_COST_PER_EVENT", 50.0)
-    ov.setdefault("CLASSES_ENABLED", True)
-    ov.setdefault("MARKET_POOLS_INFLOW", {"community_studio": 4, "home_studio": 2, "no_access": 3})
+    # You need to inspect modular_simulator.py to see what parameters it expects
+    # Look for:
+    # 1. Function signatures
+    # 2. Parameter access (like params['RENT'] vs params['MONTHLY_RENT'])
+    # 3. Default parameter definitions
     
-    # Ensure all numeric values are properly typed
-    for key, value in ov.items():
-        if isinstance(value, np.integer):
-            ov[key] = int(value)
-        elif isinstance(value, np.floating):
-            ov[key] = float(value)
+    expected_params = [
+        # Add the actual parameter names that modular_simulator.py expects
+        # These are likely the OLD parameter names before consolidation
+        'RENT',  # not MONTHLY_RENT
+        'OWNER_DRAW',  # not OWNER_COMPENSATION
+        # Add others...
+    ]
     
-    return ov
+    print("Simulator likely expects these parameter names:")
+    for param in expected_params:
+        print(f"  - {param}")
+    
+    return expected_params
+
+
+# Quick fix function - maps ALL consolidated params to simulator expectations
+def create_complete_mapping():
+    """
+    Create complete mapping from consolidated parameters to simulator parameters
+    """
+    # You need to fill this based on your consolidation
+    complete_mapping = {
+        # Consolidated UI name -> Simulator expected name
+        'MONTHLY_RENT': 'RENT',
+        'OWNER_COMPENSATION': 'OWNER_DRAW',
+        # Add ALL your consolidated parameters here
+        # Look at CONSOLIDATED_PARAM_SPECS and match to original PARAM_SPECS
+    }
+    
+    return complete_mapping
+
+
+# Test function to validate the mapping
+def test_parameter_mapping(sample_scenario_params):
+    """
+    Test the parameter mapping with sample data
+    """
+    print("\n=== TESTING PARAMETER MAPPING ===")
+    
+    # Test with sample data
+    test_params = sample_scenario_params or {
+        'MONTHLY_RENT': 5000,
+        'OWNER_COMPENSATION': 3000,
+        # Add other test parameters
+    }
+    
+    print(f"Testing with: {test_params}")
+    
+    # Test the mapping
+    result = debug_simulation_call(test_params)
+    
+    # Validate result has expected parameters
+    expected = check_simulator_expectations()
+    
+    if result:
+        missing = [p for p in expected if p not in result]
+        if missing:
+            print(f"WARNING: Missing expected parameters: {missing}")
+        else:
+            print("✓ All expected parameters present")
+    
+    return result
 
 def render_consolidated_parameter_group(group_name, group_config, params_state, prefix=""):
     """Render consolidated parameter group with progressive disclosure"""
