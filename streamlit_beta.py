@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Enhanced Advanced Analysis App - Built on your app.py foundation
-Fixes redundancies, improves visualizations, uses your actual defaults
+Updated app.py with consolidated parameters - removes redundancies
 """
 
 import io, json, re, zipfile
@@ -12,686 +12,977 @@ import streamlit as st
 import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
-
-# Your existing imports
 from modular_simulator import get_default_cfg
 from final_batch_adapter import run_original_once
 from sba_export import export_to_sba_workbook
+import os
+import json
 
-# Page configuration
-st.set_page_config(
-    page_title="Pottery Studio Business Simulator - Advanced",
-    page_icon="🏺",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# ==================== CONSOLIDATE REDUNDANT PARAMETERS ====================
-
-# FIXED: Consolidate rent parameters (was RENT vs RENT_SCENARIOS)
+# CONSOLIDATED PARAMETER SPECIFICATIONS - Removes redundancies
 CONSOLIDATED_PARAM_SPECS = {
-    # Business Fundamentals (GREEN - most likely to change)
-    "MONTHLY_RENT": {"type": "int", "min": 1000, "max": 10000, "step": 50, "label": "Monthly Rent ($)", 
-                     "color": "green", "desc": "Monthly base rent for the space", "rec": (2500, 5500)},
-    "MEMBERSHIP_PRICE": {"type": "int", "min": 100, "max": 300, "step": 5, "label": "Monthly Membership ($)", 
-                         "color": "green", "desc": "Monthly membership fee charged to members", "rec": (120, 220)},
-    "MAX_MEMBERS": {"type": "int", "min": 30, "max": 300, "step": 10, "label": "Studio Capacity", 
-                    "color": "green", "desc": "Maximum members studio can accommodate", "rec": (70, 110)},
-    "OWNER_COMPENSATION": {"type": "int", "min": 0, "max": 5000, "step": 50, "label": "Owner Monthly Draw ($)", 
-                          "color": "green", "desc": "Monthly income you take from business", "rec": (0, 1500)},
+    # Business Fundamentals (GREEN - most likely to vary)
+    "MONTHLY_RENT": {"type": "int", "min": 1000, "max": 10_000, "step": 50, "label": "Monthly Rent ($/mo)", 
+                     "desc": "Monthly base rent for the space", "rec": (2500, 5500), "color": "green"},
+    "RENT_GROWTH_PCT": {"type": "float", "min": 0.0, "max": 15.0, "step": 0.25, "label": "Rent increase per year (%)", 
+                        "desc": "Annual rent escalation percentage", "rec": (0.0, 5.0), "color": "red"},
+    "MEMBERSHIP_PRICE": {"type": "int", "min": 100, "max": 300, "step": 5, "label": "Membership fee ($/mo)", 
+                         "desc": "Monthly membership fee charged to members", "rec": (120, 220), "color": "green"},
+    "REFERENCE_PRICE": {"type": "int", "min": 50, "max": 250, "step": 5, "label": "Competitor avg price ($/mo)", 
+                        "desc": "What similar studios charge for monthly membership", "rec": (80, 180), "color": "amber"},
+    "OWNER_COMPENSATION": {"type": "int", "min": 0, "max": 5000, "step": 50, "label": "Owner draw ($/mo)", 
+                          "desc": "Monthly income you take from the business", "rec": (0, 1500), "color": "green"},
+    
+    # Capacity & Operations (GREEN - varies significantly)
+    "STUDIO_CAPACITY": {"type": "int", "min": 30, "max": 300, "step": 10, "label": "Studio capacity (max members)", 
+                        "desc": "Maximum members your studio can accommodate", "rec": (70, 110), "color": "green"},
+    "EXPANSION_THRESHOLD": {"type": "int", "min": 0, "max": 200, "step": 1, "label": "Expansion threshold (members)", 
+                           "desc": "Member count that triggers equipment expansion", "rec": (18, 30), "color": "amber"},
+    "MAX_ONBOARD_PER_MONTH": {"type": "int", "min": 1, "max": 200, "step": 1, "label": "Max onboarding / mo", 
+                             "desc": "Operational limit on new member onboarding", "rec": (6, 20), "color": "amber"},
     
     # Market Response (AMBER - may need adjustment)
-    "REFERENCE_PRICE": {"type": "int", "min": 50, "max": 250, "step": 5, "label": "Competitor Average Price ($)", 
-                        "color": "amber", "desc": "What similar studios charge for monthly membership", "rec": (80, 180)},
-    "JOIN_PRICE_ELASTICITY": {"type": "float", "min": -3.0, "max": 0.0, "step": 0.05, "label": "Price Sensitivity - New Members", 
-                              "color": "amber", "desc": "How sensitive potential members are to pricing", "rec": (-2.0, -1.0)},
-    "CHURN_PRICE_ELASTICITY": {"type": "float", "min": 0.0, "max": 2.0, "step": 0.05, "label": "Price Sensitivity - Retention", 
-                               "color": "amber", "desc": "How pricing affects member retention", "rec": (0.8, 1.4)},
-    
-    # Equipment (GREEN - varies significantly between studios)  
-    "POTTERY_WHEELS": {"type": "int", "min": 1, "max": 20, "step": 1, "label": "Pottery Wheels", 
-                       "color": "green", "desc": "Number of wheels at opening", "rec": (6, 12)},
-    "WHEEL_COST": {"type": "int", "min": 800, "max": 3500, "step": 100, "label": "Cost per Wheel ($)", 
-                   "color": "green", "desc": "Purchase price per pottery wheel", "rec": (1200, 2500)},
-    "DRYING_RACKS": {"type": "int", "min": 1, "max": 25, "step": 1, "label": "Drying Racks", 
-                     "color": "green", "desc": "Number of ware racks", "rec": (8, 15)},
-    
-    # Revenue Streams (AMBER - business model dependent)
-    "WORKSHOPS_ENABLED": {"type": "bool", "label": "Enable Workshops", "color": "amber", 
-                          "desc": "Short pottery experiences for beginners", "default": True},
-    "WORKSHOP_FREQUENCY": {"type": "float", "min": 0.0, "max": 12.0, "step": 0.5, "label": "Workshops per Month", 
-                           "color": "amber", "desc": "Average monthly workshops", "rec": (1, 4)},
-    "WORKSHOP_PRICE": {"type": "float", "min": 25.0, "max": 150.0, "step": 5.0, "label": "Workshop Price ($)", 
-                       "color": "amber", "desc": "Price per workshop attendee", "rec": (60, 100)},
-    "WORKSHOP_CAPACITY": {"type": "int", "min": 4, "max": 20, "step": 1, "label": "Workshop Capacity", 
-                          "color": "amber", "desc": "Average attendees per workshop", "rec": (8, 15)},
-    
-    # Classes (AMBER - varies by teaching focus)
-    "CLASSES_ENABLED": {"type": "bool", "label": "Enable Classes", "color": "amber", 
-                        "desc": "Multi-week pottery courses", "default": True},
-    "CLASS_SCHEDULE_MODE": {"type": "select", "options": ["monthly", "semester"], "label": "Class Schedule", 
-                            "color": "amber", "desc": "Monthly ongoing vs semester terms", "default": "semester"},
-    "CLASS_COHORTS": {"type": "int", "min": 0, "max": 8, "step": 1, "label": "Classes per Period", 
-                      "color": "amber", "desc": "New classes started per period", "rec": (1, 3)},
-    "CLASS_SIZE": {"type": "int", "min": 4, "max": 16, "step": 1, "label": "Class Size", 
-                   "color": "amber", "desc": "Students per class", "rec": (6, 12)},
-    "CLASS_PRICE": {"type": "int", "min": 100, "max": 600, "step": 25, "label": "Class Series Price ($)", 
-                    "color": "amber", "desc": "Price for full multi-week course", "rec": (200, 400)},
+    "JOIN_PRICE_ELASTICITY": {"type": "float", "min": -2.0, "max": 0.0, "step": 0.05, "label": "Join price elasticity", 
+                              "desc": "How sensitive potential members are to pricing", "rec": (-2.0, -1.0), "color": "amber"},
+    "CHURN_PRICE_ELASTICITY": {"type": "float", "min": 0.0, "max": 2.0, "step": 0.05, "label": "Churn price elasticity", 
+                               "desc": "How pricing affects member retention", "rec": (0.8, 1.4), "color": "amber"},
+    "WOM_RATE": {"type": "float", "min": 0.0, "max": 0.2, "step": 0.005, "label": "Word-of-mouth rate", 
+                 "desc": "Monthly fraction of members who generate qualified leads", "rec": (0.01, 0.06), "color": "amber"},
+    "MARKETING_SPEND": {"type": "int", "min": 0, "max": 20_000, "step": 500, "label": "Marketing spend / mo", 
+                        "desc": "Monthly paid marketing budget", "rec": (0, 3000), "color": "amber"},
+    "CAC": {"type": "int", "min": 50, "max": 2000, "step": 10, "label": "CAC ($/lead)", 
+            "desc": "Cost to acquire one qualified lead", "rec": (75, 250), "color": "amber"},
+    "LEAD_TO_JOIN_RATE": {"type": "float", "min": 0.0, "max": 1.0, "step": 0.01, "label": "Lead→Join conversion", 
+                          "desc": "Share of qualified leads that become members", "rec": (0.10, 0.35), "color": "amber"},
     
     # Economic Environment (RED - rarely changed)
     "ECONOMIC_STRESS_LEVEL": {"type": "select", 
                                "options": [("Normal", 0.05), ("Moderate", 0.08), ("Uncertain", 0.12), ("Stressed", 0.18), ("Recession", 0.30)], 
-                               "label": "Economic Stress Level", "color": "red", 
-                               "desc": "How often economic stress affects business", "default": ("Moderate", 0.08)},
-    "DOWNTURN_JOIN_IMPACT": {"type": "float", "min": 0.3, "max": 1.0, "step": 0.05, "label": "Economic Impact on Joins", 
-                             "color": "red", "desc": "Join rate multiplier during stress", "rec": (0.6, 0.9)},
-    "DOWNTURN_CHURN_IMPACT": {"type": "float", "min": 1.0, "max": 2.5, "step": 0.05, "label": "Economic Impact on Churn", 
-                              "color": "red", "desc": "Churn rate multiplier during stress", "rec": (1.1, 1.6)},
+                               "label": "Economic stress level", "desc": "How often economic stress affects business", 
+                               "rec": ("Moderate", 0.08), "color": "red"},
+    "DOWNTURN_JOIN_MULT": {"type": "float", "min": 0.2, "max": 1.5, "step": 0.01, "label": "Join multiplier in downturn", 
+                           "desc": "Join rate multiplier during economic stress", "rec": (0.6, 1.1), "color": "red"},
+    "DOWNTURN_CHURN_MULT": {"type": "float", "min": 0.5, "max": 3.0, "step": 0.05, "label": "Churn multiplier in downturn", 
+                            "desc": "Churn rate multiplier during economic stress", "rec": (1.0, 1.8), "color": "red"},
     
-    # Financing (RED - set once during planning)
-    "LOAN_504_AMOUNT": {"type": "int", "min": 0, "max": 600000, "step": 10000, "label": "SBA 504 Loan ($)", 
-                        "color": "red", "desc": "Equipment and real estate loan", "rec": (200000, 400000)},
-    "LOAN_504_RATE": {"type": "float", "min": 0.04, "max": 0.12, "step": 0.0025, "label": "504 Interest Rate (%)", 
-                      "color": "red", "desc": "Annual percentage rate", "rec": (0.06, 0.08)},
-    "LOAN_7A_AMOUNT": {"type": "int", "min": 0, "max": 300000, "step": 5000, "label": "SBA 7(a) Loan ($)", 
-                       "color": "red", "desc": "Working capital loan", "rec": (75000, 150000)},
-    "LOAN_7A_RATE": {"type": "float", "min": 0.05, "max": 0.15, "step": 0.0025, "label": "7(a) Interest Rate (%)", 
-                     "color": "red", "desc": "Annual percentage rate", "rec": (0.07, 0.10)},
+    # Market Pools
+    "MARKET_POOLS_INFLOW": {"type": "market_inflow", "label": "Market inflow", 
+                            "desc": "Monthly counts of potential joiners by segment", "rec": (0, 10), "color": "amber"},
+    
+    # Workshops (AMBER - business model dependent)
+    "WORKSHOPS_ENABLED": {"type": "bool", "label": "Enable workshops", "desc": "Short pottery experiences for beginners", 
+                          "default": True, "color": "amber"},
+    "WORKSHOPS_PER_MONTH": {"type": "float", "min": 0.0, "max": 12.0, "step": 0.5, "label": "Workshops per month", 
+                            "desc": "Average number of workshops per month", "rec": (1, 4), "color": "amber"},
+    "WORKSHOP_PRICE": {"type": "float", "min": 15.0, "max": 100.0, "step": 5.0, "label": "Workshop fee per attendee", 
+                       "desc": "Price per workshop attendee", "rec": (60, 100), "color": "amber"},
+    "WORKSHOP_CAPACITY": {"type": "int", "min": 1, "max": 40, "step": 1, "label": "Avg attendees per workshop", 
+                          "desc": "Typical workshop attendance", "rec": (8, 15), "color": "amber"},
+    "WORKSHOP_CONV_RATE": {"type": "float", "min": 0.0, "max": 1.0, "step": 0.05, "label": "Workshop conversion rate", 
+                           "desc": "Share of attendees who become members", "rec": (0.05, 0.25), "color": "amber"},
+    "WORKSHOP_CONV_LAG_MO": {"type": "int", "min": 0, "max": 12, "step": 1, "label": "Conversion lag (months)", 
+                             "desc": "Delay between workshop and membership", "rec": (0, 2), "color": "amber"},
+    "WORKSHOP_COST_PER_EVENT": {"type": "float", "min": 0.0, "max": 1000.0, "step": 5.0, "label": "Variable cost per workshop", 
+                                "desc": "Supplies, instructor, etc.", "rec": (30, 80), "color": "amber"},
+    
+    # Classes - CONSOLIDATED scheduling parameters
+    "CLASSES_ENABLED": {"type": "bool", "label": "Classes enabled", "desc": "Multi-week pottery courses", 
+                        "default": True, "color": "amber"},
+    "CLASS_SCHEDULE_MODE": {"type": "select", "options": ["monthly", "semester"], "label": "Class schedule type", 
+                            "desc": "Monthly ongoing vs semester terms", "default": "semester", "color": "amber"},
+    "CLASSES_PER_PERIOD": {"type": "int", "min": 0, "max": 12, "step": 1, "label": "Classes per period", 
+                           "desc": "New classes per month (monthly mode) or semester (semester mode)", "rec": (1, 4), "color": "amber"},
+    "CLASS_SIZE": {"type": "int", "min": 1, "max": 30, "step": 1, "label": "Class size limit", 
+                   "desc": "Maximum students per class", "rec": (6, 14), "color": "amber"},
+    "CLASS_PRICE": {"type": "int", "min": 0, "max": 1000, "step": 10, "label": "Class series price", 
+                    "desc": "Tuition for full multi-week course", "rec": (200, 600), "color": "amber"},
+    "CLASS_CONV_RATE": {"type": "float", "min": 0.0, "max": 1.0, "step": 0.01, "label": "Class conversion rate", 
+                        "desc": "Share of students who become members", "rec": (0.05, 0.25), "color": "amber"},
+    "CLASS_CONV_LAG_MO": {"type": "int", "min": 0, "max": 12, "step": 1, "label": "Class conv lag (mo)", 
+                          "desc": "Delay between class and membership", "rec": (0, 2), "color": "amber"},
+    
+    # Events (AMBER)
+    "BASE_EVENTS_PER_MONTH_LAMBDA": {"type": "float", "min": 0.0, "max": 20.0, "step": 0.5, "label": "Events λ", 
+                                     "desc": "Average number of public events per month", "rec": (1, 6), "color": "amber"},
+    "EVENTS_MAX_PER_MONTH": {"type": "int", "min": 0, "max": 20, "step": 1, "label": "Events max / mo", 
+                             "desc": "Upper bound on monthly events", "rec": (0, 6), "color": "amber"},
+    "TICKET_PRICE": {"type": "int", "min": 0, "max": 500, "step": 5, "label": "Ticket price", 
+                     "desc": "Price per event attendee", "rec": (55, 110), "color": "amber"},
+    
+    # Financing - CONSOLIDATED loan parameters
+    "LOAN_504_ANNUAL_RATE": {"type": "float", "min": 0.03, "max": 0.20, "step": 0.001, "label": "504 rate (APR)", 
+                             "desc": "SBA 504 annual percentage rate", "rec": (0.06, 0.08), "color": "red"},
+    "LOAN_504_TERM_YEARS": {"type": "int", "min": 5, "max": 25, "step": 1, "label": "504 term (years)", 
+                           "desc": "SBA 504 repayment period", "rec": (15, 20), "color": "red"},
+    "IO_MONTHS_504": {"type": "int", "min": 0, "max": 18, "step": 1, "label": "504 interest-only (mo)", 
+                      "desc": "Initial interest-only period", "rec": (6, 12), "color": "red"},
+    
+    "LOAN_7A_ANNUAL_RATE": {"type": "float", "min": 0.05, "max": 0.20, "step": 0.001, "label": "7(a) rate (APR)", 
+                           "desc": "SBA 7(a) annual percentage rate", "rec": (0.07, 0.10), "color": "red"},
+    "LOAN_7A_TERM_YEARS": {"type": "int", "min": 5, "max": 10, "step": 1, "label": "7(a) term (years)", 
+                          "desc": "SBA 7(a) repayment period", "rec": (7, 10), "color": "red"},
+    "IO_MONTHS_7A": {"type": "int", "min": 0, "max": 18, "step": 1, "label": "7(a) interest-only (mo)", 
+                     "desc": "Initial interest-only period", "rec": (6, 12), "color": "red"},
+    
+    "LOAN_CONTINGENCY_PCT": {"type": "float", "min": 0.00, "max": 0.25, "step": 0.01, "label": "CapEx contingency (%)", 
+                             "desc": "Buffer for equipment cost overruns", "rec": (0.05, 0.15), "color": "red"},
+    "RUNWAY_MONTHS": {"type": "int", "min": 0, "max": 24, "step": 1, "label": "Runway months (7a sizing)", 
+                      "desc": "Target months of expenses to cover", "rec": (12, 18), "color": "red"},
+    "EXTRA_BUFFER": {"type": "int", "min": 0, "max": 20000, "step": 1000, "label": "Extra buffer ($)", 
+                     "desc": "Additional working capital buffer", "rec": (10000, 30000), "color": "red"},
+    "RESERVE_FLOOR": {"type": "int", "min": 0, "max": 20000, "step": 1000, "label": "Reserve floor ($)", 
+                      "desc": "Minimum cash buffer for LOC sizing", "rec": (5000, 15000), "color": "red"},
+    
+    # Grants (RED)
+    "grant_amount": {"type": "int", "min": 0, "max": 100_000, "step": 1000, "label": "Grant amount", 
+                     "desc": "One-time grant injection", "rec": (0, 50000), "color": "red"},
+    "grant_month": {"type": "int", "min": -1, "max": 36, "step": 1, "label": "Grant month (None=-1)", 
+                    "desc": "When grant arrives", "rec": (3, 12), "color": "red"},
 }
 
-# ==================== PARAMETER GROUPINGS ====================
-
-PARAMETER_GROUPS = {
-    "business_fundamentals": {
-        "title": "Business Fundamentals",
-        "description": "Core operational parameters that define your studio",
+# CONSOLIDATED PARAMETER GROUPS - Cleaner organization
+CONSOLIDATED_GROUPS = {
+    "business_core": {
+        "title": "Business Fundamentals", 
         "color": "green",
-        "basic": ["MONTHLY_RENT", "MEMBERSHIP_PRICE", "MAX_MEMBERS", "OWNER_COMPENSATION"],
+        "basic": ["MONTHLY_RENT", "MEMBERSHIP_PRICE", "STUDIO_CAPACITY", "OWNER_COMPENSATION"],
+        "detailed": ["RENT_GROWTH_PCT", "REFERENCE_PRICE"]
+    },
+    "market_response": {
+        "title": "Market & Customer Response", 
+        "color": "amber",
+        "basic": ["JOIN_PRICE_ELASTICITY", "CHURN_PRICE_ELASTICITY", "MARKET_POOLS_INFLOW"],
+        "detailed": ["WOM_RATE", "MARKETING_SPEND", "CAC", "LEAD_TO_JOIN_RATE", "MAX_ONBOARD_PER_MONTH", "EXPANSION_THRESHOLD"]
+    },
+    "workshops": {
+        "title": "Workshop Revenue Stream", 
+        "color": "amber",
+        "basic": ["WORKSHOPS_ENABLED", "WORKSHOPS_PER_MONTH", "WORKSHOP_PRICE"],
+        "detailed": ["WORKSHOP_CAPACITY", "WORKSHOP_CONV_RATE", "WORKSHOP_CONV_LAG_MO", "WORKSHOP_COST_PER_EVENT"]
+    },
+    "classes": {
+        "title": "Class Revenue Stream", 
+        "color": "amber",
+        "basic": ["CLASSES_ENABLED", "CLASS_SCHEDULE_MODE", "CLASSES_PER_PERIOD"],
+        "detailed": ["CLASS_SIZE", "CLASS_PRICE", "CLASS_CONV_RATE", "CLASS_CONV_LAG_MO"]
+    },
+    "events": {
+        "title": "Event Revenue Stream", 
+        "color": "amber",
+        "basic": ["BASE_EVENTS_PER_MONTH_LAMBDA", "EVENTS_MAX_PER_MONTH", "TICKET_PRICE"],
         "detailed": []
     },
-    "market_pricing": {
-        "title": "Market & Pricing Response", 
-        "description": "How your studio responds to market conditions and pricing",
-        "color": "amber",
-        "basic": ["REFERENCE_PRICE"],
-        "detailed": ["JOIN_PRICE_ELASTICITY", "CHURN_PRICE_ELASTICITY"]
-    },
-    "equipment": {
-        "title": "Equipment & Infrastructure",
-        "description": "Studio equipment and setup costs",
-        "color": "green", 
-        "basic": ["POTTERY_WHEELS", "DRYING_RACKS"],
-        "detailed": ["WHEEL_COST"]
-    },
-    "revenue_workshops": {
-        "title": "Workshop Revenue Stream",
-        "description": "Short pottery experiences and beginner programs",
-        "color": "amber",
-        "basic": ["WORKSHOPS_ENABLED", "WORKSHOP_FREQUENCY", "WORKSHOP_PRICE"],
-        "detailed": ["WORKSHOP_CAPACITY"]
-    },
-    "revenue_classes": {
-        "title": "Class Revenue Stream", 
-        "description": "Multi-week structured pottery courses",
-        "color": "amber",
-        "basic": ["CLASSES_ENABLED", "CLASS_SCHEDULE_MODE", "CLASS_COHORTS"],
-        "detailed": ["CLASS_SIZE", "CLASS_PRICE"]
-    },
     "economic_environment": {
-        "title": "Economic Environment",
-        "description": "External economic conditions affecting your studio",
+        "title": "Economic Environment", 
         "color": "red",
         "basic": ["ECONOMIC_STRESS_LEVEL"],
-        "detailed": ["DOWNTURN_JOIN_IMPACT", "DOWNTURN_CHURN_IMPACT"]
+        "detailed": ["DOWNTURN_JOIN_MULT", "DOWNTURN_CHURN_MULT"]
     },
     "financing": {
-        "title": "SBA Loan Financing",
-        "description": "Loan terms and financing structure", 
+        "title": "SBA Loan Financing", 
         "color": "red",
-        "basic": ["LOAN_504_AMOUNT", "LOAN_7A_AMOUNT"],
-        "detailed": ["LOAN_504_RATE", "LOAN_7A_RATE"]
+        "basic": ["LOAN_504_ANNUAL_RATE", "LOAN_7A_ANNUAL_RATE"],
+        "detailed": ["LOAN_504_TERM_YEARS", "LOAN_7A_TERM_YEARS", "IO_MONTHS_504", "IO_MONTHS_7A", 
+                    "LOAN_CONTINGENCY_PCT", "RUNWAY_MONTHS", "EXTRA_BUFFER", "RESERVE_FLOOR"]
+    },
+    "grants": {
+        "title": "Grants & External Funding", 
+        "color": "red",
+        "basic": ["grant_amount", "grant_month"],
+        "detailed": []
     }
 }
 
-# ==================== IMPROVED VISUALIZATION FUNCTIONS ====================
+# Keep existing helper functions but update parameter references
+def consolidate_build_overrides(env: dict, strat: dict) -> dict:
+    """CLEANED UP: Build overrides with consolidated parameters"""
+    import math
+    ov: dict = {}
 
-def create_enhanced_cash_flow_chart(df_results):
-    """Create enhanced cash flow visualization - FIXED VERSION"""
-    
-    try:
-        # Safer column detection
-        cash_col = None
-        for col_name in ['cash_balance', 'cash', 'ending_cash']:
-            if col_name in df_results.columns:
-                cash_col = col_name
-                break
-        
-        if cash_col is None:
-            st.error("No cash balance column found in results")
-            return go.Figure()
-        
-        # Get cash flow data by month with safer aggregation
-        cash_by_month = df_results.groupby('month')[cash_col].agg(['mean', 'median', 'std']).reset_index()
-        
-        # Get percentiles safely
-        percentile_data = []
-        for month in df_results['month'].unique():
-            month_data = df_results[df_results['month'] == month][cash_col]
-            percentile_data.append({
-                'month': month,
-                'p10': month_data.quantile(0.1),
-                'p25': month_data.quantile(0.25), 
-                'p75': month_data.quantile(0.75),
-                'p90': month_data.quantile(0.9)
-            })
-        
-        percentiles_df = pd.DataFrame(percentile_data)
-        
-        # Create single subplot for now to avoid complexity
-        fig = go.Figure()
-        
-        # Add confidence bands
-        fig.add_trace(go.Scatter(
-            x=percentiles_df['month'], 
-            y=percentiles_df['p90'],
-            fill=None, mode='lines', line_color='rgba(0,100,80,0)', 
-            showlegend=False
-        ))
-        
-        fig.add_trace(go.Scatter(
-            x=percentiles_df['month'], 
-            y=percentiles_df['p10'],
-            fill='tonexty', mode='lines', line_color='rgba(0,100,80,0)',
-            name='10th-90th percentile', fillcolor='rgba(0,100,80,0.2)'
-        ))
-        
-        # Add median line
-        fig.add_trace(go.Scatter(
-            x=cash_by_month['month'], 
-            y=cash_by_month['median'],
-            mode='lines', name='Median Cash', 
-            line=dict(color='blue', width=3)
-        ))
-        
-        # Add insolvency line
-        fig.add_hline(y=0, line_dash="dash", line_color="red", 
-                     annotation_text="Insolvency Line")
-        
-        fig.update_layout(
-            title="Cash Flow Over Time",
-            xaxis_title="Month",
-            yaxis_title="Cash Balance ($)",
-            height=400
-        )
-        
-        return fig
-        
-    except Exception as e:
-        st.error(f"Error creating cash flow chart: {e}")
-        return go.Figure()
+    META_SKIP = {"name", "grant_month", "grant_amount"}
 
-def create_business_model_comparison(df_results):
-    """Create business model comparison - SIMPLIFIED VERSION"""
+    def _merge_clean(src: dict):
+        for k, v in (src or {}).items():
+            if k in META_SKIP:
+                continue
+            if v is None or (isinstance(v, float) and math.isnan(v)):
+                continue
+            ov[k] = v
+
+    _merge_clean(env)
+    _merge_clean(strat)
+
+    # CONSOLIDATED MAPPINGS - Single source of truth
     
+    # Core business parameters
+    if "MONTHLY_RENT" in ov:
+        ov["RENT"] = ov.pop("MONTHLY_RENT")
+        ov["RENT_SCENARIOS"] = np.array([float(ov["RENT"])], dtype=float)
+    
+    if "OWNER_COMPENSATION" in ov:
+        ov["OWNER_DRAW"] = ov.pop("OWNER_COMPENSATION")
+        ov["OWNER_DRAW_SCENARIOS"] = [float(ov["OWNER_DRAW"])]
+    
+    if "MEMBERSHIP_PRICE" in ov:
+        ov["PRICE"] = ov.pop("MEMBERSHIP_PRICE")
+    
+    if "STUDIO_CAPACITY" in ov:
+        capacity = int(ov.pop("STUDIO_CAPACITY"))
+        if capacity > 0:
+            ov["MAX_MEMBERS"] = capacity
+        ov["MEMBER_CAP"] = capacity
+    
+    # Workshop parameters
+    if "WORKSHOP_PRICE" in ov:
+        ov["WORKSHOP_FEE"] = ov.pop("WORKSHOP_PRICE")
+    if "WORKSHOP_CAPACITY" in ov:
+        ov["WORKSHOP_AVG_ATTENDANCE"] = ov.pop("WORKSHOP_CAPACITY")
+    
+    # Class parameters - handle consolidated scheduling
+    if "CLASS_SCHEDULE_MODE" in ov and "CLASSES_PER_PERIOD" in ov:
+        mode = ov.pop("CLASS_SCHEDULE_MODE")
+        classes_per_period = int(ov.pop("CLASSES_PER_PERIOD"))
+        
+        if mode == "semester":
+            ov["USE_SEMESTER_SCHEDULE"] = True
+            ov["CLASSES_PER_SEMESTER"] = classes_per_period
+            ov["CLASSES_CALENDAR_MODE"] = "semester"
+            ov["CLASS_COHORTS_PER_MONTH"] = max(0, int(math.ceil(classes_per_period / 3.0)))
+        else:
+            ov["USE_SEMESTER_SCHEDULE"] = False
+            ov["CLASSES_CALENDAR_MODE"] = "monthly"
+            ov["CLASS_COHORTS_PER_MONTH"] = classes_per_period
+    
+    if "CLASS_SIZE" in ov:
+        ov["CLASS_CAP_PER_COHORT"] = ov.pop("CLASS_SIZE")
+    
+    # Economic environment
+    if "ECONOMIC_STRESS_LEVEL" in ov:
+        stress_level = ov.pop("ECONOMIC_STRESS_LEVEL")
+        if isinstance(stress_level, tuple):
+            ov["DOWNTURN_PROB_PER_MONTH"] = stress_level[1]
+        elif isinstance(stress_level, (int, float)):
+            ov["DOWNTURN_PROB_PER_MONTH"] = stress_level
+    
+    # Legacy alias mappings
+    alias_mappings = {
+        "WOM_RATE": "WOM_Q",
+        "MAX_ONBOARD_PER_MONTH": "MAX_ONBOARDINGS_PER_MONTH",
+        "LEAD_TO_JOIN_RATE": "BASELINE_JOIN_RATE"
+    }
+    
+    for new_name, old_name in alias_mappings.items():
+        if new_name in ov and old_name not in ov:
+            ov[old_name] = ov.pop(new_name)
+    
+    # Scenario configuration
+    sc_name = env.get("name", "Scenario")
+    ov["SCENARIO_CONFIGS"] = [{
+        "name": sc_name,
+        "grant_amount": float(ov.get("grant_amount", 0.0)),
+        "grant_month": ov.get("grant_month", None),
+    }]
+    
+    # Forward staged CapEx schedule if present
     try:
-        fig = make_subplots(rows=1, cols=2, subplot_titles=('Key Metrics', 'Member Growth'))
-        
-        # Simple metrics bar chart
-        final_month = df_results['month'].max()
-        final_data = df_results[df_results['month'] == final_month]
-        
-        metrics = {
-            'Survival Rate': (final_data['cash_balance'] > 0).mean(),
-            'Median Cash ($k)': final_data['cash_balance'].median() / 1000
+        if strat.get("CAPEX_ITEMS"):
+            ov["CAPEX_ITEMS"] = list(strat.get("CAPEX_ITEMS", []))
+    except Exception:
+        pass
+
+    # --- Independent loan modes ---
+    ov["CAPEX_LOAN_MODE"] = st.session_state.get("capex_mode", "upfront")
+    ov["OPEX_LOAN_MODE"]  = st.session_state.get("opex_mode",  "upfront")
+    
+    # Upfront overrides
+    val_504 = st.session_state.get("loan_504", None)
+    if val_504 not in (None, "", 0, 0.0):
+        ov["LOAN_OVERRIDE_504"] = float(val_504)
+    
+    val_7a = st.session_state.get("loan_7a", None)
+    if val_7a not in (None, "", 0, 0.0):
+        ov["LOAN_OVERRIDE_7A"] = float(val_7a)
+    
+    # Staged rules
+    if ov["CAPEX_LOAN_MODE"] == "staged":
+        ov["LOAN_STAGED_RULE"] = {
+            "draw_pct_of_purchase": float(st.session_state.get("capex_draw_pct", 1.0)),
+            "min_tranche": float(st.session_state.get("capex_min_tr", 0.0)),
+            "max_tranche": (None if (st.session_state.get("capex_max_tr", 0)==0) else float(st.session_state["capex_max_tr"])),
         }
-        
-        # Add member count if available
-        if 'active_members' in df_results.columns:
-            metrics['Final Members'] = final_data['active_members'].median()
-        
-        fig.add_trace(
-            go.Bar(x=list(metrics.keys()), y=list(metrics.values()), name="Key Metrics"),
-            row=1, col=1
-        )
-        
-        # Member growth if available
-        if 'active_members' in df_results.columns:
-            member_growth = df_results.groupby('month')['active_members'].median()
-            fig.add_trace(
-                go.Scatter(x=member_growth.index, y=member_growth.values,
-                          mode='lines+markers', name='Member Growth'),
-                row=1, col=2
-            )
-        
-        fig.update_layout(height=400, showlegend=False)
-        return fig
-        
-    except Exception as e:
-        st.error(f"Error creating business model chart: {e}")
-        return go.Figure()
+    if ov["OPEX_LOAN_MODE"] == "staged":
+        ov["LOAN_STAGED_RULE_OPEX"] = {
+            "facility_limit": float(st.session_state.get("opex_facility", 0.0)),
+            "min_draw": float(st.session_state.get("opex_min_tr", 0.0)),
+            "max_draw": (None if (st.session_state.get("opex_max_tr", 0)==0) else float(st.session_state["opex_max_tr"])),
+            "reserve_floor": float(st.session_state.get("reserve_floor", 0.0)),
+        }
+    
+    # Defaults
+    ov.setdefault("WORKSHOPS_ENABLED", True)
+    ov.setdefault("WORKSHOP_COST_PER_EVENT", 50.0)
+    ov.setdefault("CLASSES_ENABLED", True)
 
-def create_risk_dashboard(df_results):
-    """Create risk dashboard - SIMPLIFIED VERSION"""
-    
-    try:
-        # Find cash column
-        cash_col = None
-        for col_name in ['cash_balance', 'cash', 'ending_cash']:
-            if col_name in df_results.columns:
-                cash_col = col_name
-                break
-        
-        if cash_col is None:
-            return go.Figure()
-        
-        # Calculate risk metrics safely
-        risk_data = []
-        for month in sorted(df_results['month'].unique()):
-            month_data = df_results[df_results['month'] == month][cash_col]
-            risk_data.append({
-                'month': month,
-                'prob_negative': (month_data < 0).mean(),
-                'prob_low_cash': (month_data < 10000).mean()
-            })
-        
-        risk_df = pd.DataFrame(risk_data)
-        
-        fig = go.Figure()
-        
-        fig.add_trace(go.Scatter(
-            x=risk_df['month'], 
-            y=risk_df['prob_negative'] * 100,
-            mode='lines+markers', 
-            name='Probability of Negative Cash (%)',
-            line=dict(color='red')
-        ))
-        
-        fig.add_trace(go.Scatter(
-            x=risk_df['month'], 
-            y=risk_df['prob_low_cash'] * 100,
-            mode='lines+markers',
-            name='Probability of Low Cash (<$10k) (%)', 
-            line=dict(color='orange')
-        ))
-        
-        fig.update_layout(
-            title="Cash Flow Risk Over Time",
-            xaxis_title="Month",
-            yaxis_title="Risk Probability (%)",
-            height=400
-        )
-        
-        return fig
-        
-    except Exception as e:
-        st.error(f"Error creating risk dashboard: {e}")
-        return go.Figure()
+    return ov
 
-# ==================== ENHANCED PARAMETER RENDERING ====================
-
-def render_parameter_group(group_name, group_config, params_state):
-    """Render a parameter group with progressive disclosure"""
+def render_consolidated_parameter_group(group_name, group_config, params_state, prefix=""):
+    """Render consolidated parameter group with progressive disclosure"""
+    color_indicators = {"green": "🟢", "amber": "🟡", "red": "🔴"}
+    color_descriptions = {
+        "green": "Most likely to vary between studios",
+        "amber": "May need adjustment for your situation", 
+        "red": "Set once during planning"
+    }
     
-    st.subheader(f"{group_config['title']}")
-    st.write(group_config['description'])
-    
-    # Color coding indicator
-    color_map = {"green": "🟢", "amber": "🟡", "red": "🔴"}
-    color_name_map = {"green": "Most likely to vary", "amber": "May need adjustment", "red": "Rarely changed"}
-    
-    st.caption(f"{color_map[group_config['color']]} {color_name_map[group_config['color']]}")
+    st.markdown(f"**{group_config['title']}**")
+    color = group_config.get('color', 'amber')
+    st.caption(f"{color_indicators[color]} {color_descriptions[color]}")
     
     # Always show basic parameters
     for param_name in group_config['basic']:
-        param_spec = CONSOLIDATED_PARAM_SPECS[param_name]
-        params_state[param_name] = render_single_parameter(param_name, param_spec, params_state.get(param_name))
+        if param_name in CONSOLIDATED_PARAM_SPECS:
+            spec = CONSOLIDATED_PARAM_SPECS[param_name]
+            params_state[param_name] = render_consolidated_parameter(param_name, spec, params_state.get(param_name), prefix)
     
-    # Detailed parameters in expander
-    if group_config['detailed']:
-        with st.expander("🔧 Detailed Settings", expanded=False):
+    # Detailed parameters in expander if they exist
+    if group_config.get('detailed'):
+        with st.expander("🔧 Advanced Settings", expanded=False):
             for param_name in group_config['detailed']:
-                param_spec = CONSOLIDATED_PARAM_SPECS[param_name]
-                params_state[param_name] = render_single_parameter(param_name, param_spec, params_state.get(param_name))
+                if param_name in CONSOLIDATED_PARAM_SPECS:
+                    spec = CONSOLIDATED_PARAM_SPECS[param_name]
+                    params_state[param_name] = render_consolidated_parameter(param_name, spec, params_state.get(param_name), prefix)
     
     return params_state
 
-def render_single_parameter(param_name, param_spec, current_value):
-    """Render a single parameter with appropriate widget"""
+def render_consolidated_parameter(param_name, spec, current_value, prefix=""):
+    """Render individual consolidated parameter with appropriate widget"""
     
-    param_type = param_spec['type']
-    label = param_spec['label']
-    help_text = build_help_text(param_spec)
+    param_type = spec['type']
+    label = spec['label']
+    help_text = build_consolidated_help_text(spec)
+    key = f"{prefix}_{param_name}" if prefix else param_name
     
-    # Set default value if not provided
+    # Set default if needed
     if current_value is None:
-        current_value = param_spec.get('default', get_default_value(param_spec))
+        current_value = spec.get('default', get_consolidated_default(spec))
     
-    # Render appropriate widget
+    # Render widget based on type
     if param_type == 'bool':
-        return st.checkbox(label, value=current_value, help=help_text)
+        return st.checkbox(label, value=current_value, key=key, help=help_text)
     
     elif param_type == 'int':
-        return st.slider(
+        value = st.slider(
             label, 
-            min_value=param_spec['min'], 
-            max_value=param_spec['max'], 
+            min_value=spec['min'], 
+            max_value=spec['max'], 
             value=current_value,
-            step=param_spec['step'],
+            step=spec['step'],
+            key=key,
             help=help_text
         )
+        show_range_hint(value, spec)
+        return value
     
     elif param_type == 'float':
-        return st.slider(
+        value = st.slider(
             label,
-            min_value=param_spec['min'],
-            max_value=param_spec['max'], 
+            min_value=spec['min'],
+            max_value=spec['max'], 
             value=current_value,
-            step=param_spec['step'],
+            step=spec['step'],
+            key=key,
             help=help_text
         )
+        show_range_hint(value, spec)
+        return value
     
     elif param_type == 'select':
-        options = param_spec['options']
+        options = spec['options']
         if isinstance(options[0], tuple):
-            # Options with values (like economic stress levels)
-            option_labels = [opt[0] for opt in options]
-            option_values = [opt[1] for opt in options]
-            
-            # Find current selection
             try:
-                current_index = option_values.index(current_value[1] if isinstance(current_value, tuple) else current_value)
-            except (ValueError, TypeError):
+                current_index = next(i for i, opt in enumerate(options) 
+                                   if (isinstance(current_value, tuple) and opt[1] == current_value[1]) 
+                                   or opt[1] == current_value)
+            except (StopIteration, TypeError):
                 current_index = 0
-                
-            selected = st.selectbox(
+            
+            return st.selectbox(
                 label,
                 options=options,
                 index=current_index,
                 format_func=lambda x: x[0] if isinstance(x, tuple) else str(x),
+                key=key,
                 help=help_text
             )
-            return selected
         else:
-            # Simple string options
             current_index = options.index(current_value) if current_value in options else 0
-            return st.selectbox(label, options=options, index=current_index, help=help_text)
+            return st.selectbox(label, options=options, index=current_index, key=key, help=help_text)
+    
+    elif param_type == 'market_inflow':
+        # Keep your existing market inflow rendering logic
+        base = f"{key}"
+        cur = _normalize_market_inflow(current_value if isinstance(current_value, dict) else {})
+        c_def = st.session_state.get(f"{base}_c", cur["community_studio"])
+        h_def = st.session_state.get(f"{base}_h", cur["home_studio"])
+        n_def = st.session_state.get(f"{base}_n", cur["no_access"])
+    
+        c = st.slider("Community studio inflow", 0, 50, int(c_def), key=f"{base}_c", help=help_text)
+        h = st.slider("Home studio inflow",      0, 50, int(h_def), key=f"{base}_h", help=help_text)
+        n = st.slider("No access inflow",        0, 50, int(n_def), key=f"{base}_n", help=help_text)
+    
+        result = {"community_studio": c, "home_studio": h, "no_access": n}
+        st.session_state[base] = result
+        return result
     
     return current_value
 
-def build_help_text(param_spec):
-    """Build comprehensive help text from parameter specification"""
+def build_consolidated_help_text(spec):
+    """Build help text from consolidated spec"""
     parts = []
     
-    if 'desc' in param_spec:
-        parts.append(param_spec['desc'])
+    if 'desc' in spec:
+        parts.append(spec['desc'])
     
-    if 'rec' in param_spec and isinstance(param_spec['rec'], (list, tuple)) and len(param_spec['rec']) == 2:
-        parts.append(f"Recommended range: {param_spec['rec'][0]} - {param_spec['rec'][1]}")
+    if 'rec' in spec and isinstance(spec['rec'], (list, tuple)) and len(spec['rec']) == 2:
+        parts.append(f"Typical range: {spec['rec'][0]} - {spec['rec'][1]}")
     
     return " | ".join(parts)
 
-def get_default_value(param_spec):
-    """Get sensible default value from parameter specification"""
-    if param_spec['type'] == 'bool':
+def show_range_hint(value, spec):
+    """Show hint if value is outside recommended range"""
+    try:
+        if not st.session_state.get("_show_hints", True):
+            return
+        rec = spec.get("rec")
+        if isinstance(rec, (list, tuple)) and len(rec) == 2:
+            lo, hi = float(rec[0]), float(rec[1])
+            if value < lo or value > hi:
+                st.caption(f"⚠️ Outside typical range ({lo}-{hi}). Consider if this fits your situation.")
+    except Exception:
+        pass
+
+def get_consolidated_default(spec):
+    """Get default value for consolidated parameter"""
+    if 'default' in spec:
+        return spec['default']
+    elif spec['type'] == 'bool':
         return False
-    elif param_spec['type'] in ['int', 'float']:
-        return param_spec['min']
-    elif param_spec['type'] == 'select':
-        return param_spec['options'][0]
+    elif spec['type'] in ['int', 'float']:
+        return spec['min']
+    elif spec['type'] == 'select':
+        return spec['options'][0]
     return None
 
-# ==================== MAIN APPLICATION ====================
+def _normalize_market_inflow(d: dict) -> dict:
+    """Normalize market inflow data"""
+    pools = {
+        "community_studio": d.get("community_studio", 0),
+        "home_studio":      d.get("home_studio", 0),
+        "no_access":        d.get("no_access", 0),
+    }
+    out = {}
+    for k, v in pools.items():
+        try:
+            out[k] = max(0, int(v))
+        except Exception:
+            out[k] = 0
+    return out
 
-def main():
-    st.title("🏺 Pottery Studio Business Simulator - Advanced Analysis")
-    st.write("**Complete parameter control with enhanced visualization and risk analysis**")
-    
-    # Initialize session state for parameters
-    if 'params_state' not in st.session_state:
-        st.session_state.params_state = {}
-    
-    # Sidebar configuration
-    with st.sidebar:
-        st.header("Studio Configuration")
-        
-        # Render all parameter groups
-        for group_name, group_config in PARAMETER_GROUPS.items():
-            with st.expander(f"{group_config['title']}", expanded=(group_name == 'business_fundamentals')):
-                st.session_state.params_state = render_parameter_group(
-                    group_name, group_config, st.session_state.params_state
-                )
-        
-        # Simulation controls
-        st.subheader("Simulation Controls")
-        num_simulations = st.slider("Number of Simulations", 25, 500, 100, 25,
-                                   help="More simulations = more accurate results but slower")
-        time_horizon = st.selectbox("Time Horizon", [12, 24, 36, 48, 60], index=2,
-                                   format_func=lambda x: f"{x} months ({x//12} years)")
-        random_seed = st.number_input("Random Seed", 0, 1000000, 42, 1,
-                                     help="Fix for reproducible results")
-    
-    # Main content area
-    col1, col2 = st.columns([2, 1])
-    
-    with col2:
-        if st.button("🚀 Run Advanced Analysis", type="primary", use_container_width=True):
-            with st.spinner("Running advanced simulation analysis..."):
-                # Convert parameters to format expected by your simulator
-                simulator_params = convert_params_for_simulator(st.session_state.params_state)
-                simulator_params.update({
-                    'N_SIMULATIONS': num_simulations,
-                    'MONTHS': time_horizon,
-                    'RANDOM_SEED': random_seed
+# Keep all your existing helper functions
+def compute_kpis_from_cell(df_cell: pd.DataFrame) -> dict:
+    """Compute lender-style KPIs from a single cell's simulation dataframe"""
+    out = {}
+    if df_cell.empty:
+        return out
+
+    # Resolve columns
+    month_col = "month" if "month" in df_cell.columns else ("Month" if "Month" in df_cell.columns else "t")
+    if month_col not in df_cell.columns:
+        return out
+
+    cash_col = pick_col(df_cell, ["cash_balance", "cash", "ending_cash"])
+    if cash_col is None:
+        return out
+
+    last_month = int(df_cell[month_col].max())
+    end = df_cell[df_cell[month_col] == last_month]
+
+    sim_col = "simulation_id" if "simulation_id" in df_cell.columns else None
+    if sim_col:
+        min_cash_by_sim = df_cell.groupby(sim_col)[cash_col].min()
+    else:
+        min_cash_by_sim = pd.Series([float(df_cell[cash_col].min())])
+
+    out["survival_prob"] = float((min_cash_by_sim >= 0).mean())
+    out["cash_q10"] = float(end[cash_col].quantile(0.10))
+    out["cash_med"] = float(end[cash_col].quantile(0.50))
+    out["cash_q90"] = float(end[cash_col].quantile(0.90))
+
+    if "dscr" in end.columns:
+        out["dscr_q10"] = float(end["dscr"].quantile(0.10))
+        out["dscr_med"] = float(end["dscr"].quantile(0.50))
+        out["dscr_q90"] = float(end["dscr"].quantile(0.90))
+
+    if "active_members" in end.columns:
+        out["members_med"] = float(end["active_members"].median())
+
+    return out
+
+def pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+# Keep your existing cache and other helper functions
+def _preflight_validate(cfg: dict) -> bool:
+    """Return True if config looks sane"""
+    errs = []
+    if "USAGE_SHARE" in cfg and not isinstance(cfg["USAGE_SHARE"], (dict, list, tuple)):
+        errs.append("USAGE_SHARE must be a dict/list")
+    if "STATIONS" in cfg and not isinstance(cfg["STATIONS"], (dict, list, int)):
+        errs.append("STATIONS must be dict/list/int")
+    if errs:
+        st.error("Invalid inputs:\n- " + "\n- ".join(errs))
+        return False
+    return True
+
+# Keep your existing caching decorators and simulation functions
+@st.cache_data(show_spinner=False)
+def get_defaults_cached():
+    from modular_simulator import get_default_cfg
+    return get_default_cfg()
+
+def _normalize_capex_items(df):
+    """Convert the data_editor DataFrame into a clean list[dict]"""
+    items = []
+    if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+        return items
+    for _, r in df.iterrows():
+        try:
+            label = str(r.get("label", "")).strip()
+            unit  = float(r.get("unit_cost", 0) or 0)
+            cnt   = int(r.get("count", 1) or 1)
+            mth   = r.get("month", None)
+            thr   = r.get("member_threshold", None)
+            enabled = bool(r.get("enabled", True))
+            mth = None if (mth == "" or pd.isna(mth)) else int(mth)
+            thr = None if (thr == "" or pd.isna(thr)) else int(thr)
+            if not enabled:
+                continue
+            if unit > 0 and (mth is not None or thr is not None):
+                items.append({
+                    "label": label,
+                    "unit_cost": unit,
+                    "count": cnt,
+                    "month": mth,
+                    "member_threshold": thr,
+                    "finance_504": bool(r.get("finance_504", False)),
                 })
-                
+        except Exception:
+            continue
+    return items
+
+# Keep your existing figure capture and caching
+class FigureCapture:
+    def __init__(self, title_suffix: str = ""):
+        self.title_suffix = title_suffix
+        self._orig_show = None
+        self.images: List[Tuple[str, bytes]] = []
+        self.manifest = []
+
+    def __enter__(self):
+        matplotlib.use("Agg", force=True)
+        self._orig_show = plt.show
+        counter = {"i": 0}
+
+        def _title_for(fig):
+            parts = []
+            if fig._suptitle:
+                txt = fig._suptitle.get_text()
+                if txt:
+                    parts.append(txt)
+            for ax in fig.axes:
+                t = getattr(ax, "get_title", lambda: "")()
+                if t:
+                    parts.append(t)
+            return " | ".join(parts).strip()
+
+        def _ensure_suffix(fig):
+            if not self.title_suffix:
+                return
+            has_any_title = any(ax.get_title() for ax in fig.get_axes())
+            if not has_any_title:
+                fig.suptitle(self.title_suffix)
+
+        def _show(*args, **kwargs):
+            counter["i"] += 1
+            fig = plt.gcf()
+        
+            _ensure_suffix(fig)
+        
+            has_suptitle  = bool(fig._suptitle and fig._suptitle.get_text())
+            has_ax_titles = any(ax.get_title() for ax in fig.get_axes())
+        
+            if has_suptitle and has_ax_titles:
+                fig._suptitle.set_y(0.98)
                 try:
-                    # Run simulation using your existing function
-                    results = run_original_once("modular_simulator.py", simulator_params)
-                    df_results, effective_config = (results if isinstance(results, tuple) else (results, None))
-                    
-                    if df_results is not None and not df_results.empty:
-                        st.session_state.simulation_results = df_results
-                        st.session_state.effective_config = effective_config
-                        st.success("Advanced analysis completed!")
-                    else:
-                        st.error("Simulation returned empty results")
-                        
-                except Exception as e:
-                    st.error(f"Simulation failed: {str(e)}")
-                    st.exception(e)
-    
-    # Display results if available
-    if 'simulation_results' in st.session_state:
-        df_results = st.session_state.simulation_results
+                    fig._suptitle.set_fontsize(max(fig._suptitle.get_fontsize() - 2, 10))
+                except Exception:
+                    pass
+                fig.tight_layout(rect=[0, 0, 1, 0.94])
+            else:
+                fig.tight_layout()
         
-        # Enhanced metrics display
-        st.subheader("Business Performance Summary")
-        
-        # Key metrics in columns
-        col1, col2, col3, col4 = st.columns(4)
-        
-        final_month = df_results['month'].max()
-        final_data = df_results[df_results['month'] == final_month]
-        
-        with col1:
-            survival_rate = (final_data['cash_balance'] > 0).mean()
-            st.metric("Survival Rate", f"{survival_rate:.1%}")
-            
-            median_revenue = df_results['revenue_total'].median() if 'revenue_total' in df_results.columns else 0
-            st.metric("Median Monthly Revenue", f"${median_revenue:,.0f}")
-        
-        with col2:
-            median_cash = final_data['cash_balance'].median()
-            st.metric("Final Cash (Median)", f"${median_cash:,.0f}")
-            
-            if 'active_members' in df_results.columns:
-                final_members = final_data['active_members'].median()
-                st.metric("Final Members (Median)", f"{final_members:.0f}")
-        
-        with col3:
-            cash_10th = final_data['cash_balance'].quantile(0.1)
-            st.metric("Cash 10th Percentile", f"${cash_10th:,.0f}")
-            
-            if 'dscr' in df_results.columns:
-                median_dscr = df_results[df_results['month'] == min(12, final_month)]['dscr'].median()
-                st.metric("DSCR @ Year 1", f"{median_dscr:.2f}")
-        
-        with col4:
-            # Calculate break-even month
-            if 'operating_profit' in df_results.columns:
-                breakeven_data = df_results.groupby('simulation_id')['operating_profit'].apply(
-                    lambda x: x.index[x > 0].min() if (x > 0).any() else np.nan
-                )
-                median_breakeven = breakeven_data.median()
-                st.metric("Median Break-even", f"Month {median_breakeven:.0f}" if not pd.isna(median_breakeven) else "N/A")
-        
-        # Enhanced visualizations
-        st.subheader("Enhanced Analysis")
-        
-        tab1, tab2, tab3 = st.tabs(["Cash Flow Analysis", "Business Model Metrics", "Risk Dashboard"])
-        
-        with tab1:
-            st.plotly_chart(create_enhanced_cash_flow_chart(df_results), use_container_width=True)
-        
-        with tab2:
-            st.plotly_chart(create_business_model_comparison(df_results), use_container_width=True)
-        
-        with tab3:
-            st.plotly_chart(create_risk_dashboard(df_results), use_container_width=True)
-        
-        # Data export options
-        st.subheader("Export Results")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("Download Summary CSV"):
-                summary_data = calculate_summary_metrics(df_results)
-                csv = pd.DataFrame([summary_data]).to_csv(index=False)
-                st.download_button(
-                    "Click to Download Summary",
-                    data=csv,
-                    file_name="studio_analysis_summary.csv",
-                    mime="text/csv"
-                )
-        
-        with col2:
-            if st.button("Download Full Results CSV"):
-                csv = df_results.to_csv(index=False)
-                st.download_button(
-                    "Click to Download Full Data", 
-                    data=csv,
-                    file_name="studio_simulation_detailed.csv",
-                    mime="text/csv"
-                )
+            buf = io.BytesIO()
+            fig.savefig(buf, dpi=200, bbox_inches="tight", format="png")
+            buf.seek(0)
+            fname = f"fig_{counter['i']:02d}.png"
+            self.images.append((fname, buf.read()))
+            self.manifest.append({"file": fname, "title": _title_for(fig)})
+            plt.close(fig)
 
-def convert_params_for_simulator(params_state):
-    """Convert consolidated parameters back to format expected by your simulator"""
-    
-    # Map consolidated parameters back to original parameter names
-    simulator_params = {}
-    
-    # Handle basic mappings
-    param_mapping = {
-        'MONTHLY_RENT': 'RENT',
-        'MEMBERSHIP_PRICE': 'PRICE', 
-        'MAX_MEMBERS': 'MEMBER_CAP',
-        'OWNER_COMPENSATION': 'OWNER_DRAW',
-        'POTTERY_WHEELS': 'N_WHEELS_START',
-        'DRYING_RACKS': 'N_RACKS_START',
-        'WORKSHOP_FREQUENCY': 'WORKSHOPS_PER_MONTH',
-        'WORKSHOP_PRICE': 'WORKSHOP_FEE',
-        'WORKSHOP_CAPACITY': 'WORKSHOP_AVG_ATTENDANCE',
-        'CLASS_COHORTS': 'CLASS_COHORTS_PER_MONTH',
-        'CLASS_SIZE': 'CLASS_CAP_PER_COHORT',
-        'CLASS_PRICE': 'CLASS_PRICE',
-        'LOAN_504_AMOUNT': 'LOAN_OVERRIDE_504',
-        'LOAN_7A_AMOUNT': 'LOAN_OVERRIDE_7A',
-        'LOAN_504_RATE': 'LOAN_504_ANNUAL_RATE',
-        'LOAN_7A_RATE': 'LOAN_7A_ANNUAL_RATE'
-    }
-    
-    for new_name, old_name in param_mapping.items():
-        if new_name in params_state:
-            simulator_params[old_name] = params_state[new_name]
-    
-    # Handle special cases
-    if 'ECONOMIC_STRESS_LEVEL' in params_state:
-        stress_level = params_state['ECONOMIC_STRESS_LEVEL']
-        if isinstance(stress_level, tuple):
-            simulator_params['DOWNTURN_PROB_PER_MONTH'] = stress_level[1]
-        else:
-            simulator_params['DOWNTURN_PROB_PER_MONTH'] = stress_level
-    
-    if 'DOWNTURN_JOIN_IMPACT' in params_state:
-        simulator_params['DOWNTURN_JOIN_MULT'] = params_state['DOWNTURN_JOIN_IMPACT']
-    
-    if 'DOWNTURN_CHURN_IMPACT' in params_state:
-        simulator_params['DOWNTURN_CHURN_MULT'] = params_state['DOWNTURN_CHURN_IMPACT']
-    
-    if 'CLASS_SCHEDULE_MODE' in params_state:
-        if params_state['CLASS_SCHEDULE_MODE'] == 'semester':
-            simulator_params['USE_SEMESTER_SCHEDULE'] = True
-            simulator_params['CLASSES_PER_SEMESTER'] = params_state.get('CLASS_COHORTS', 2) * 3
-        else:
-            simulator_params['USE_SEMESTER_SCHEDULE'] = False
-    
-    # Set required arrays for rent and owner draw
-    if 'RENT' in simulator_params:
-        simulator_params['RENT_SCENARIOS'] = np.array([float(simulator_params['RENT'])], dtype=float)
-    
-    if 'OWNER_DRAW' in simulator_params:
-        simulator_params['OWNER_DRAW_SCENARIOS'] = [float(simulator_params['OWNER_DRAW'])]
-    
-    # Enable revenue streams
-    simulator_params['WORKSHOPS_ENABLED'] = params_state.get('WORKSHOPS_ENABLED', True)
-    simulator_params['CLASSES_ENABLED'] = params_state.get('CLASSES_ENABLED', True)
-    
-    # Set default market conditions
-    simulator_params.update({
-        'MARKET_POOLS_INFLOW': {'community_studio': 4, 'home_studio': 2, 'no_access': 3},
-        'WOM_RATE': 0.03,
-        'LEAD_TO_JOIN_RATE': 0.20,
-        'MAX_ONBOARD_PER_MONTH': 10
-    })
-    
-    return simulator_params
+        plt.show = _show
+        return self
 
-def calculate_summary_metrics(df_results):
-    """Calculate summary business metrics from simulation results"""
+    def __exit__(self, exc_type, exc, tb):
+        if self._orig_show:
+            plt.show = self._orig_show
+
+@st.cache_data(show_spinner=False)
+def run_cell_cached(env: dict, strat: dict, seed: int, cache_key: Optional[str] = None):
+    """Your existing cached simulation runner"""
+    if cache_key is None:
+        cache_key = f"v6|{json.dumps(env, sort_keys=True)}|{json.dumps(strat, sort_keys=True)}|{seed}"
+
+    ov = consolidate_build_overrides(env, strat)  # Use consolidated function
+    ov["RANDOM_SEED"] = seed
+
+    title_suffix = f"{env['name']} | {strat['name']}"
+    with FigureCapture(title_suffix) as cap:
+        try:
+            res = run_original_once("modular_simulator.py", ov)
+        except Exception as e:
+            st.error(f"Simulation failed: {e}")
+            st.exception(e)
+            return pd.DataFrame(), None, [], []
+
+    df_cell, eff = (res if isinstance(res, tuple) else (res, None))
+
+    df_cell = df_cell.copy()
+    df_cell["environment"] = env["name"]
+    df_cell["strategy"]    = strat["name"]
+    if "simulation_id" not in df_cell.columns:
+        df_cell["simulation_id"] = 0
+    return df_cell, eff, cap.images, cap.manifest
+
+# Keep your existing summarize_cell and other analysis functions
+def summarize_cell(df: pd.DataFrame) -> Tuple[dict, pd.DataFrame]:
+    """Your existing cell summary function"""
+    if df.empty:
+        return {}, pd.DataFrame()
     
-    final_month = df_results['month'].max()
-    final_data = df_results[df_results['month'] == final_month]
+    env_col = "environment"
+    strat_col = "strategy"
+    sim_col = "simulation_id"
+    month_col = "month" if "month" in df.columns else ("Month" if "Month" in df.columns else "t")
     
-    summary = {
-        'survival_rate': (final_data['cash_balance'] > 0).mean(),
-        'median_final_cash': final_data['cash_balance'].median(),
-        'cash_10th_percentile': final_data['cash_balance'].quantile(0.1),
-        'cash_90th_percentile': final_data['cash_balance'].quantile(0.9),
-    }
+    if month_col not in df.columns:
+        return {}, pd.DataFrame()
+
+    cash_col = pick_col(df, ["cash_balance","cash","ending_cash"])
+    cf_col   = pick_col(df, ["cfads","operating_cash_flow","op_cf","net_cash_flow","cash_flow"])
+
+    if cash_col is None:
+        raise RuntimeError("cash balance column not found in results.")
+    if cf_col is None:
+        df = df.sort_values([env_col, strat_col, sim_col, month_col]).copy()
+        df["_fallback_cf"] = df.groupby([env_col, strat_col, sim_col])[cash_col].diff().fillna(0.0)
+        cf_col = "_fallback_cf"
     
-    # Add revenue metrics if available
-    if 'revenue_total' in df_results.columns:
-        summary.update({
-            'median_monthly_revenue': df_results['revenue_total'].median(),
-            'total_revenue_final_year': df_results[df_results['month'] > final_month - 12]['revenue_total'].sum()
+    breakeven_k = 3
+
+    def _first_cash_negative(g: pd.DataFrame) -> float:
+        s = g.set_index(month_col)[cash_col]
+        idx = s.index[s.values < 0]
+        return float(idx.min()) if len(idx) else np.nan
+
+    def _first_sustained_ge_zero(g: pd.DataFrame, k: int = 3) -> float:
+        s = g.set_index(month_col)[cf_col].sort_index()
+        ok = (s >= 0).astype(int).rolling(k, min_periods=k).sum() == k
+        idx = ok[ok].index
+        return float(idx.min()) if len(idx) else np.nan
+
+    rows = []
+    for (env, strat, sim), g in df.sort_values([env_col, strat_col, sim_col, month_col]).groupby([env_col, strat_col, sim_col]):
+        rows.append({
+            env_col: env,
+            strat_col: strat,
+            sim_col: sim,
+            "t_insolvency": _first_cash_negative(g),
+            "t_breakeven":  _first_sustained_ge_zero(g, k=breakeven_k),
+            "min_cash": float(g[cash_col].min()),
         })
-    
-    # Add member metrics if available  
-    if 'active_members' in df_results.columns:
-        summary.update({
-            'final_member_count': final_data['active_members'].median(),
-            'max_member_count': df_results['active_members'].max()
-        })
-    
-    # Add DSCR if available
-    if 'dscr' in df_results.columns:
-        year_1_dscr = df_results[df_results['month'] == min(12, final_month)]['dscr'].median()
-        summary['dscr_year_1'] = year_1_dscr
-    
-    return summary
+    timings = pd.DataFrame(rows, columns=[env_col, strat_col, sim_col, "t_insolvency", "t_breakeven", "min_cash"])
 
-if __name__ == "__main__":
-    main()
+    T = int(df[month_col].max())
+    
+    # Survival
+    surv = (timings.assign(neg=lambda d: d["min_cash"] < 0)
+                    .groupby([env_col, strat_col])["neg"].mean()
+                    .reset_index(name="prob_insolvent_by_T"))
+    surv["survival_prob"] = 1.0 - surv["prob_insolvent_by_T"]
+
+    # Cash quantiles
+    last = df[df[month_col] == T]
+    cash_q = (last.groupby([env_col, strat_col])[cash_col]
+                  .quantile([0.10, 0.50, 0.90]).unstack().reset_index()
+                  .rename(columns={0.10:"cash_q10", 0.50:"cash_med", 0.90:"cash_q90"}))
+
+    # DSCR
+    m12 = 12 if T >= 12 else T
+    if "dscr" in df.columns:
+        dscr_q = (df[df[month_col] == m12]
+                    .groupby([env_col, strat_col])["dscr"]
+                    .quantile([0.10, 0.50, 0.90]).unstack().reset_index()
+                    .rename(columns={0.10:"dscr_q10", 0.50:"dscr_med", 0.90:"dscr_q90"}))
+    else:
+        dscr_q = pd.DataFrame({env_col: [], strat_col: [], "dscr_q10": [], "dscr_med": [], "dscr_q90": []})
+
+    def _med_or_nan(s: pd.Series) -> float:
+        s = s.replace([np.inf, -np.inf], np.nan).dropna()
+        return float(s.median()) if len(s) else np.nan
+
+    tim_summary = (timings.groupby([env_col, strat_col]).agg(
+        median_time_to_insolvency_months=("t_insolvency", _med_or_nan),
+        median_time_to_breakeven_months=("t_breakeven", _med_or_nan),
+    ).reset_index())
+
+    matrix_row = (surv[[env_col, strat_col, "survival_prob"]]
+                    .merge(cash_q, on=[env_col, strat_col], how="left")
+                    .merge(dscr_q, on=[env_col, strat_col], how="left")
+                    .merge(tim_summary, on=[env_col, strat_col], how="left"))
+
+    return matrix_row.iloc[0].to_dict(), timings
+
+# Main UI
+st.set_page_config(page_title="GCWS Simulator - Enhanced", layout="wide")
+st.title("Ginkgo Clayworks — Scenario Explorer (Enhanced)")
+
+# Your existing scenarios and strategies
+SCENARIOS = [
+    {
+        "name": "Baseline",
+        "ECONOMIC_STRESS_LEVEL": ("Moderate", 0.08),
+        "DOWNTURN_JOIN_MULT": 1.00,
+        "DOWNTURN_CHURN_MULT": 1.00,
+        "MARKET_POOLS_INFLOW": {"community_studio": 4, "home_studio": 2, "no_access": 3},
+        "grant_amount": 0.0, "grant_month": None,
+        "WOM_RATE": 0.03,
+        "LEAD_TO_JOIN_RATE": 0.20,
+        "MAX_ONBOARD_PER_MONTH": 10,
+        "STUDIO_CAPACITY": 92,
+        "EXPANSION_THRESHOLD": 20,
+    },
+    {
+        "name": "Recession", 
+        "ECONOMIC_STRESS_LEVEL": ("Stressed", 0.18),
+        "DOWNTURN_JOIN_MULT": 0.65,
+        "DOWNTURN_CHURN_MULT": 1.50,
+        "MARKET_POOLS_INFLOW": {"community_studio": 2, "home_studio": 1, "no_access": 1},
+        "grant_amount": 0.0, "grant_month": None,
+        "WOM_RATE": 0.02,
+        "LEAD_TO_JOIN_RATE": 0.15,
+        "MAX_ONBOARD_PER_MONTH": 8,
+        "STUDIO_CAPACITY": 86,
+        "EXPANSION_THRESHOLD": 25,
+    },
+    {
+        "name": "SlowRecovery_Grant25k_M4",
+        "ECONOMIC_STRESS_LEVEL": ("Uncertain", 0.10),
+        "DOWNTURN_JOIN_MULT": 0.85,
+        "DOWNTURN_CHURN_MULT": 1.20,
+        "MARKET_POOLS_INFLOW": {"community_studio": 3, "home_studio": 1, "no_access": 2},
+        "grant_amount": 25000, "grant_month": 4,
+        "WOM_RATE": 0.025,
+        "LEAD_TO_JOIN_RATE": 0.18,
+        "MAX_ONBOARD_PER_MONTH": 9,
+        "STUDIO_CAPACITY": 94,
+        "EXPANSION_THRESHOLD": 22,
+    },
+    {
+        "name": "Boom",
+        "ECONOMIC_STRESS_LEVEL": ("Normal", 0.02),
+        "DOWNTURN_JOIN_MULT": 1.20,
+        "DOWNTURN_CHURN_MULT": 0.85,
+        "MARKET_POOLS_INFLOW": {"community_studio": 6, "home_studio": 3, "no_access": 4},
+        "grant_amount": 0.0, "grant_month": None,
+        "WOM_RATE": 0.04,
+        "LEAD_TO_JOIN_RATE": 0.25,
+        "MAX_ONBOARD_PER_MONTH": 12,
+        "STUDIO_CAPACITY": 100,
+        "EXPANSION_THRESHOLD": 18,
+    },
+]
+
+STRATEGIES = [
+    {"name":"Enhanced_A", "MONTHLY_RENT":4000, "OWNER_COMPENSATION":2000, "MEMBERSHIP_PRICE": 185,
+     "CLASS_SCHEDULE_MODE": "semester", "CLASSES_PER_PERIOD": 2},
+    {"name":"Enhanced_B", "MONTHLY_RENT":4000, "OWNER_COMPENSATION":2000, "MEMBERSHIP_PRICE": 185,
+     "CLASS_SCHEDULE_MODE": "semester", "CLASSES_PER_PERIOD": 2},
+]
+
+# Sidebar with consolidated controls
+with st.sidebar:
+    with st.expander("About this model", expanded=False):
+        st.markdown("Enhanced version with consolidated parameters and improved visualization.")
+    
+    st.header("Configuration")
+    st.caption("Hover over any label for explanation. Colors indicate how likely parameters are to vary between studios.")
+    st.session_state["_show_hints"] = st.toggle("Show range hints", value=True)
+
+    scen_names  = [s["name"] for s in SCENARIOS]
+    strat_names = [s["name"] for s in STRATEGIES]
+
+    scen_sel  = st.selectbox("Scenario preset", scen_names, index=0)
+    strat_sel = st.selectbox("Strategy preset", strat_names, index=0)
+
+    # Loan controls (keep your existing loan UI)
+    st.subheader("Loans")
+    colA, colB = st.columns(2)
+    with colA:
+        capex_mode = st.radio("CapEx Loan (504) Mode", ["upfront","staged"], index=0, horizontal=True)
+        if capex_mode == "upfront":
+            loan_504 = st.number_input("Upfront CapEx Loan (504)", min_value=0, step=1000, value=0)
+        else:
+            capex_draw_pct = st.slider("CapEx: Staged Draw %", 0.0, 1.0, 1.0, 0.05)
+            capex_min_tr   = st.number_input("CapEx: Min Tranche ($)", min_value=0, step=500, value=0)
+            capex_max_tr   = st.number_input("CapEx: Max Tranche ($)", min_value=0, step=500, value=0)
+            
+    with colB:
+        opex_mode = st.radio("OpEx Loan (7a) Mode", ["upfront","staged"], index=0, horizontal=True)
+        if opex_mode == "upfront":
+            loan_7a  = st.number_input("Upfront OpEx Loan (7a)",  min_value=0, step=1000, value=0)
+        else:
+            opex_facility = st.number_input("OpEx: Facility Limit ($)", min_value=0, step=1000, value=0)
+            opex_min_tr   = st.number_input("OpEx: Min Draw ($)",     min_value=0, step=500,  value=0)
+            opex_max_tr   = st.number_input("OpEx: Max Draw ($)",     min_value=0, step=500,  value=0)
+            reserve_floor = st.number_input("OpEx: Cash Floor ($)",    min_value=0, step=500,  value=0)
+
+    # Store loan settings
+    st.session_state["capex_mode"] = capex_mode
+    st.session_state["opex_mode"]  = opex_mode
+    if capex_mode == "upfront":
+        st.session_state["loan_504"] = float(loan_504)
+    else:
+        st.session_state["capex_draw_pct"] = float(capex_draw_pct)
+        st.session_state["capex_min_tr"]   = float(capex_min_tr)
+        st.session_state["capex_max_tr"]   = float(capex_max_tr)
+    if opex_mode == "upfront":
+        st.session_state["loan_7a"] = float(loan_7a)
+    else:
+        st.session_state["opex_facility"]  = float(opex_facility)
+        st.session_state["opex_min_tr"]    = float(opex_min_tr)
+        st.session_state["opex_max_tr"]    = float(opex_max_tr)
+        st.session_state["reserve_floor"]  = float(reserve_floor)
+   
+    # Simulation settings
+    with st.expander("Simulation settings", expanded=False):
+        sim_count = st.slider("Simulations per run", min_value=5, max_value=300, step=5, value=100)
+        seed = st.number_input("Random seed", min_value=0, max_value=10_000_000, step=1, value=42)
+    st.session_state["N_SIMULATIONS"] = int(sim_count)
+    st.session_state["RANDOM_SEED"]   = int(seed)
+
+    # Get selected presets
+    env  = next(s for s in SCENARIOS  if s["name"] == scen_sel)
+    strat = next(s for s in STRATEGIES if s["name"] == strat_sel)
+    strat["N_SIMULATIONS"] = int(sim_count)
+    
+    # Render consolidated parameter groups
+    for group_name, group_config in CONSOLIDATED_GROUPS.items():
+        with st.expander(group_config['title'], expanded=(group_name == 'business_core')):
+            if group_name in ['business_core', 'market_response']:
+                env = render_consolidated_parameter_group(group_name, group_config, env, "env")
+            else:
+                strat = render_consolidated_parameter_group(group_name, group_config, strat, "strat")
+
+    # Equipment section (keep your existing data_editor)
+    with st.expander("Equipment", expanded=True):
+        st.markdown("**Staged purchases (all equipment)**")
+        
+        capex_existing = strat.get("CAPEX_ITEMS", [])
+        capex_df_default = pd.DataFrame(capex_existing) if capex_existing else pd.DataFrame([
+            {"enabled": True,  "label": "Kiln #1 Skutt 1227", "count": 1,  "unit_cost": 7000, "month": 0,   "member_threshold": None, "finance_504": True},
+            {"enabled": True,  "label": "Wheels",       "count": 12,  "unit_cost": 3000,  "month": 0,   "member_threshold": None, "finance_504": True},
+            {"enabled": True,  "label": "Wire racks",   "count": 5,  "unit_cost": 150,  "month": 0,   "member_threshold": None, "finance_504": True},
+            {"enabled": True,  "label": "Clay traps",   "count": 1,  "unit_cost": 160,  "month": 0,   "member_threshold": None, "finance_504": True},
+            {"enabled": True, "label": "Kiln #2 Skutt 1427", "count": 1,  "unit_cost": 10000, "month": 0,   "member_threshold": None, "finance_504": True},
+            {"enabled": True, "label": "Wire racks",   "count": 7,  "unit_cost": 150,  "month": 0,   "member_threshold": None, "finance_504": True},
+            {"enabled": False, "label": "Wheels",       "count": 10, "unit_cost": 800,  "month": 6,   "member_threshold": None, "finance_504": True},
+            {"enabled": True, "label": "Slab roller",  "count": 1,  "unit_cost": 1800, "month": None,"member_threshold": 50, "finance_504": True},
+        ])
+        
+        capex_df = st.data_editor(
+            capex_df_default,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "enabled": st.column_config.CheckboxColumn("Include"),
+                "label": st.column_config.TextColumn("Item"),
+                "count": st.column_config.NumberColumn("Count", min_value=1, step=1),
+                "unit_cost": st.column_config.NumberColumn("Unit cost ($)", min_value=0, step=10),
+                "month": st.column_config.NumberColumn("Trigger month", min_value=0, step=1),
+                "member_threshold": st.column_config.NumberColumn("Trigger members", min_value=0, step=1),
+                "finance_504": st.column_config.CheckboxColumn("Finance via 504"),
+            },
+        )
+        
+        strat["CAPEX_ITEMS"] = _normalize_capex_items(capex_df)
+
+# Main content - single run tab
+if not _preflight_validate(strat):
+    st.stop()
+
+st.caption("Enhanced app with consolidated parameters and improved visualization")
+run_btn = st.button("Run simulation")
+
+if run_btn:
+    try:
+        run_cell_cached.clear()
+        st.cache_data.clear()
+    except Exception:
+        pass
+        
+    with st.spinner("Running simulator…"):
+        cache_key = f"v7|{json.dumps(env, sort_keys=True)}|{json.dumps(strat, sort_keys=True)}|{seed}"
+        df_cell, eff, images, manifest = run_cell_cached(env, strat, seed, cache_key)
+        st.session_state["df_result"] = df_cell
+        
+    st.subheader(f"Results — {env['name']} | {strat['name']}")
+
+    # Display KPIs and results using your existing functions
+    kpi_cell = compute_kpis_from_cell(df_cell)
+    row_dict, _tim = summarize_cell(df_cell)
+    
+    # Show metrics
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Survival prob", f"{kpi_cell.get('survival_prob', 0):.2f}")
+    col2.metric("Cash p50 ($k)", f"{(kpi_cell.get('cash_med', 0)/1e3):,.0f}")
+    col3.metric("DSCR p50", f"{kpi_cell.get('dscr_med', 0):.2f}")
+    col4.metric("Breakeven (mo)", f"{row_dict.get('median_time_to_breakeven_months', 0):.0f}")
+    
+    # Display charts
+    st.markdown("#### Captured charts")
+    for fname, data in images:
+        st.image(data, caption=fname, use_container_width=True)
+
+    # Download bundle
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+        for fname, data in images:
+            zf.writestr(fname, data)
+    st.download_button("Download plots (zip)", data=buf.getvalue(),
+                        file_name=f"{env['name']}__{strat['name']}_plots.zip")
+
+    st.markdown("#### Raw results")
+    st.dataframe(df_cell.head(250))
