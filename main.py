@@ -1458,6 +1458,20 @@ def build_complete_overrides(params_state: dict) -> dict:
         except (json.JSONDecodeError, TypeError):
             overrides["EVENT_MUG_COST_RANGE"] = (4.5, 7.5)  # Default
     
+    # Economic environment parameters that need to be at top level
+    # (these are used directly by the simulator, not within SCENARIO_CONFIGS)
+    economic_params = [
+        "DOWNTURN_PROB_PER_MONTH", "DOWNTURN_JOIN_MULT", "DOWNTURN_CHURN_MULT",
+        "WOM_Q", "WOM_SATURATION", "REFERRAL_RATE_PER_MEMBER", "REFERRAL_CONV",
+        "AWARENESS_RAMP_MONTHS", "AWARENESS_RAMP_START_MULT", "AWARENESS_RAMP_END_MULT",
+        "ADOPTION_SIGMA", "CLASS_TERM_MONTHS", "CS_UNLOCK_FRACTION_PER_TERM",
+        "MAX_ONBOARDINGS_PER_MONTH", "CAPACITY_DAMPING_BETA", "UTILIZATION_CHURN_UPLIFT"
+    ]
+    
+    for param in economic_params:
+        if param in params_state:
+            overrides[param] = params_state[param]
+    
     # Scenario config wrapper (required by simulator)
     grant_amount = params_state.get("grant_amount", 0.0)
     grant_month = params_state.get("grant_month", -1)
