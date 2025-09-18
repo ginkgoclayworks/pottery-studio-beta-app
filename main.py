@@ -1792,47 +1792,26 @@ def render_complete_ui():
         for param_name, spec in COMPLETE_PARAM_SPECS.items():
             st.session_state.params_state[param_name] = spec.get("default", get_param_default(spec))
     
-    # Sidebar with simulation controls
-    with st.sidebar:
-        st.header("⚙️ Simulation Controls")
-        
-        # Core simulation settings (always visible)
-        st.session_state.params_state["MONTHS"] = st.slider(
-            "Simulation horizon (months)", 12, 120, 
-            st.session_state.params_state.get("MONTHS", 60), 6
+    # Group visibility and reset (moved from sidebar)
+    st.subheader("View")
+    show_all_groups = st.checkbox("Show all parameter groups", value=False)
+    if not show_all_groups:
+        selected_groups = st.multiselect(
+            "Select parameter groups to show:",
+            options=list(PARAMETER_GROUPS.keys()),
+            default=["business_fundamentals", "pricing", "capacity"],
+            format_func=lambda x: PARAMETER_GROUPS[x]["title"]
         )
-        st.session_state.params_state["N_SIMULATIONS"] = st.slider(
-            "Number of simulations", 10, 500,
-            st.session_state.params_state.get("N_SIMULATIONS", 100), 10
-        )
-        st.session_state.params_state["RANDOM_SEED"] = st.number_input(
-            "Random seed", 1, 999999,
-            st.session_state.params_state.get("RANDOM_SEED", 42)
-        )
-        
-        # Run button
-        run_simulation = st.button("🚀 Run Simulation", type="primary")
-        
-        st.markdown("---")
-        
-        # Parameter visibility controls
-        show_all_groups = st.checkbox("Show all parameter groups", value=False)
-        if not show_all_groups:
-            selected_groups = st.multiselect(
-                "Select parameter groups to show:",
-                options=list(PARAMETER_GROUPS.keys()),
-                default=["business_fundamentals", "pricing", "capacity"],
-                format_func=lambda x: PARAMETER_GROUPS[x]["title"]
-            )
-        else:
-            selected_groups = list(PARAMETER_GROUPS.keys())
-        
-        # Reset to defaults button
-        if st.button("Reset All to Defaults"):
-            st.session_state.params_state = {}
-            for param_name, spec in COMPLETE_PARAM_SPECS.items():
-                st.session_state.params_state[param_name] = spec.get("default", get_param_default(spec))
-            st.experimental_rerun()
+    else:
+        selected_groups = list(PARAMETER_GROUPS.keys())
+
+    # Reset to defaults button
+    if st.button("Reset All to Defaults"):
+        st.session_state.params_state = {}
+        for param_name, spec in COMPLETE_PARAM_SPECS.items():
+            st.session_state.params_state[param_name] = spec.get("default", get_param_default(spec))
+        st.experimental_rerun()
+ 
 
     # Main parameter interface
     st.header("Parameter Configuration")
@@ -1853,6 +1832,29 @@ def render_complete_ui():
                 st.session_state.params_state = render_parameter_group(
                     group_name, group_info, st.session_state.params_state
                 )
+    
+    # --- Run form at bottom ---
+    with st.form("run_form"):
+        st.subheader("Run simulation")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.session_state.params_state["MONTHS"] = st.slider(
+                "Simulation horizon (months)", 12, 120,
+                int(st.session_state.params_state.get("MONTHS", 60)), 6
+            )
+        with c2:
+            st.session_state.params_state["N_SIMULATIONS"] = st.slider(
+                "Monte Carlo draws", 1, 2000,
+                int(st.session_state.params_state.get("N_SIMULATIONS", 100)), 1
+            )
+        with c3:
+            st.session_state.params_state["RANDOM_SEED"] = st.number_input(
+                "Random seed", 1, 999999,
+                int(st.session_state.params_state.get("RANDOM_SEED", 42))
+            )
+
+        run_simulation = st.form_submit_button("🚀 Run Simulation", type="primary")
+    
     
     # Equipment configuration (special handling)
     with st.expander("🔧 Equipment & Capital Expenditures", expanded=False):
