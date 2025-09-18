@@ -299,6 +299,18 @@ try: FINANCE_FEES_7A
 except NameError: FINANCE_FEES_7A = True
 try: FINANCE_FEES_504
 except NameError: FINANCE_FEES_504 = True
+# --- Firing fee tier defaults (overridable from UI/batch) ---
+try: FIRING_FEE_TIER1_LBS
+except NameError: FIRING_FEE_TIER1_LBS = 20
+try: FIRING_FEE_TIER2_LBS
+except NameError: FIRING_FEE_TIER2_LBS = 40
+try: FIRING_FEE_TIER1_RATE
+except NameError: FIRING_FEE_TIER1_RATE = 3.0
+try: FIRING_FEE_TIER2_RATE
+except NameError: FIRING_FEE_TIER2_RATE = 4.0
+try: FIRING_FEE_TIER3_RATE
+except NameError: FIRING_FEE_TIER3_RATE = 5.0
+
     
 # Owner draw taper
 OWNER_DRAW_START_MONTH = 1
@@ -839,11 +851,60 @@ def build_loan_schedule(principal: float, annual_rate: float, term_years: int,
     # Beyond loan maturity: zeros
     return pays
 
-def compute_firing_fee(clay_lbs):
-    if clay_lbs <= 20: return clay_lbs * 3
-    elif clay_lbs <= 40: return 20 * 3 + (clay_lbs - 20) * 4
-    else: return 20 * 3 + 20 * 4 + (clay_lbs - 40) * 5
+# --- Firing fee schedule defaults (overridable) ---
+try:
+    FIRING_FEE_SCHEDULE
+except NameError:
+    # List of tiers: each item is {"up_to_lbs": int|None, "rate": float}
+    # None for "no upper limit" final tier
+    FIRING_FEE_SCHEDULE = [
+        {"up_to_lbs": 20, "rate": 3.0},
+        {"up_to_lbs": 40, "rate": 4.0},
+        {"up_to_lbs": None, "rate": 5.0},
+    ]
 
+def compute_firing_fee(clay_lbs):
+    """
+    Compute firing fee revenue from lbs, using overridable tier schedule.
+    Accepts FIRING_FEE_SCHEDULE as a list of {"up_to_lbs": int|None, "rate": float}
+    or as a JSON string with the same structure.
+    """
+    sched = globals().get("FIRING_FEE_SCHEDULE")
+    # Allow JSON string override
+    if isinstance(sched, str):
+        try:
+            import json as _json
+            sched = _json.loads(sched)
+        except Exception:
+            sched = None
+    # Fallback if override missing/bad
+    if not isinstance(sched, list) or not sched:
+        sched = [
+            {"up_to_lbs": 20, "rate": 3.0},
+            {"up_to_lbs": 40, "rate": 4.0},
+            {"up_to_lbs": None, "rate": 5.0},
+        ]
+    # Enforce ascending order and sane values
+    def _upper(x):
+        return float("inf") if x is None else float(x)
+    total = 0.0
+    remaining = float(clay_lbs)
+    prev_cut = 0.0
+    for tier in sched:
+        up_to = _upper(tier.get("up_to_lbs"))
+        rate = float(tier.get("rate", 0.0))
+        band = max(0.0, min(remaining, up_to - prev_cut))
+        if band > 0:
+            total += band * rate
+            remaining -= band
+        prev_cut = up_to
+        if remaining <= 1e-9:
+            break
+    # If still remaining (no open-ended final tier), charge last rate
+    if remaining > 1e-9:
+        last_rate = float(sched[-1].get("rate", 0.0))
+        total += remaining * last_rate
+    return total
 
 
 def _add_staged_tranche_into_array(arr: np.ndarray, start_month: int, principal: float,

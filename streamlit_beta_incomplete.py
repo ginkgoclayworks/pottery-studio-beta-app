@@ -1061,16 +1061,8 @@ COMPLETE_PARAM_SPECS = {
     },
     
     # =============================================================================
-    # MEMBERSHIP TRAJECTORY MODE
+    # SIMULATION SETTINGS
     # =============================================================================
-    "MEMBERSHIP_MODE": {
-        "type": "select", 
-        "options": ["calculated", "manual_table", "piecewise_trends"], 
-        "default": "calculated",
-        "label": "Membership Projection Method",
-        "desc": "How to determine membership over time: calculated from market dynamics, manual month-by-month input, or piecewise trend specification.",
-        "group": "membership_trajectory"
-    },
     "MONTHS": {
         "type": "int", "min": 12, "max": 120, "step": 6, "default": 60,
         "label": "Simulation Horizon (months)",
@@ -1093,41 +1085,35 @@ COMPLETE_PARAM_SPECS = {
 
 # GROUP DEFINITIONS WITH LOGICAL ORGANIZATION
 PARAMETER_GROUPS = {
-    "membership_trajectory": {
-        "title": "📈 Membership Trajectory", 
-        "color": "green",
-        "desc": "How membership grows over time - the most critical business assumption.",
-        "priority": 1
-    },
     "business_fundamentals": {
         "title": "🏢 Business Fundamentals", 
         "color": "green",
         "desc": "Core business parameters most likely to vary between studios and locations.",
-        "priority": 2
+        "priority": 1
     },
     "pricing": {
         "title": "💰 Pricing & Market Response", 
         "color": "amber", 
         "desc": "Pricing strategy and how customers respond to price changes.",
-        "priority": 3
+        "priority": 2
     },
     "member_behavior": {
         "title": "👥 Member Behavior & Archetypes", 
         "color": "amber",
         "desc": "Member mix, usage patterns, and retention characteristics by member type.",
-        "priority": 4
+        "priority": 3
     },
     "capacity": {
         "title": "🏭 Studio Capacity & Equipment", 
         "color": "green",
         "desc": "Physical capacity constraints, equipment counts, and utilization factors.",
-        "priority": 5
+        "priority": 4
     },
     "market_dynamics": {
         "title": "📈 Market Dynamics & Acquisition", 
         "color": "amber",
-        "desc": "Market size, acquisition channels, word-of-mouth, and member acquisition rates. Only used if Membership Mode = 'calculated'.",
-        "priority": 6
+        "desc": "Market size, acquisition channels, word-of-mouth, and member acquisition rates.",
+        "priority": 5
     },
     "economic_environment": {
         "title": "🌊 Economic Environment", 
@@ -1228,166 +1214,7 @@ PARAMETER_GROUPS = {
 }
 
 # PARAMETER RENDERING FUNCTIONS
-def render_membership_trajectory(params_state: dict) -> dict:
-    """Special rendering for membership trajectory options"""
-    
-    membership_mode = params_state.get("MEMBERSHIP_MODE", "calculated")
-    
-    st.markdown("**📈 Membership Trajectory**")
-    st.markdown("🟢 The most critical business assumption - how membership grows over time.")
-    
-    # Mode selector
-    params_state["MEMBERSHIP_MODE"] = st.selectbox(
-        "Membership Projection Method",
-        options=["calculated", "manual_table", "piecewise_trends"],
-        index=["calculated", "manual_table", "piecewise_trends"].index(membership_mode),
-        format_func=lambda x: {
-            "calculated": "Calculated from Market Dynamics (original model)",
-            "manual_table": "Manual Table (specify exact member count each month)",
-            "piecewise_trends": "Piecewise Trends (specify growth patterns by period)"
-        }[x],
-        help="Choose how to determine membership over time. Manual options let you specify your own growth assumptions."
-    )
-    
-    if params_state["MEMBERSHIP_MODE"] == "manual_table":
-        st.markdown("**Manual Membership Table**")
-        st.caption("Specify exact member count for each month. Model will use these values instead of calculating member acquisition.")
-        
-        months = params_state.get("MONTHS", 60)
-        
-        # Initialize with reasonable defaults if not exists
-        if "MANUAL_MEMBERSHIP_TABLE" not in params_state:
-            # Create a reasonable growth curve as default
-            default_curve = []
-            for month in range(1, months + 1):
-                if month <= 6:
-                    members = min(20, month * 3)  # Start slow
-                elif month <= 24:
-                    members = 20 + (month - 6) * 1.5  # Steady growth
-                else:
-                    members = min(60, 47 + (month - 24) * 0.5)  # Slower mature growth
-                default_curve.append(int(members))
-            params_state["MANUAL_MEMBERSHIP_TABLE"] = default_curve
-        
-        # Create DataFrame for editing
-        membership_df = pd.DataFrame({
-            "Month": list(range(1, months + 1)),
-            "Members": params_state["MANUAL_MEMBERSHIP_TABLE"][:months]
-        })
-        
-        # Data editor
-        edited_df = st.data_editor(
-            membership_df,
-            use_container_width=True,
-            num_rows="fixed",
-            column_config={
-                "Month": st.column_config.NumberColumn("Month", disabled=True),
-                "Members": st.column_config.NumberColumn("Members", min_value=0, max_value=500, step=1)
-            },
-            hide_index=True
-        )
-        
-        params_state["MANUAL_MEMBERSHIP_TABLE"] = edited_df["Members"].tolist()
-        
-        # Show a preview chart
-        if len(edited_df) > 0:
-            st.line_chart(edited_df.set_index("Month")["Members"])
-    
-    elif params_state["MEMBERSHIP_MODE"] == "piecewise_trends":
-        st.markdown("**Piecewise Trend Specification**")
-        st.caption("Define growth patterns for different time periods. Each segment can be linear or exponential.")
-        
-        # Initialize with default segments
-        if "MEMBERSHIP_SEGMENTS" not in params_state:
-            params_state["MEMBERSHIP_SEGMENTS"] = [
-                {"start_month": 1, "end_month": 6, "start_members": 5, "end_members": 20, "type": "linear"},
-                {"start_month": 7, "end_month": 24, "start_members": 20, "end_members": 50, "type": "linear"},
-                {"start_month": 25, "end_month": 60, "start_members": 50, "end_members": 70, "type": "exponential"}
-            ]
-        
-        # Segment editor
-        segments_df = pd.DataFrame(params_state["MEMBERSHIP_SEGMENTS"])
-        
-        edited_segments = st.data_editor(
-            segments_df,
-            use_container_width=True,
-            num_rows="dynamic",
-            column_config={
-                "start_month": st.column_config.NumberColumn("Start Month", min_value=1, step=1),
-                "end_month": st.column_config.NumberColumn("End Month", min_value=1, step=1),
-                "start_members": st.column_config.NumberColumn("Start Members", min_value=0, step=1),
-                "end_members": st.column_config.NumberColumn("End Members", min_value=0, step=1),
-                "type": st.column_config.SelectboxColumn("Growth Type", options=["linear", "exponential"])
-            },
-            hide_index=True
-        )
-        
-        params_state["MEMBERSHIP_SEGMENTS"] = edited_segments.to_dict("records")
-        
-        # Generate and show preview
-        months = params_state.get("MONTHS", 60)
-        membership_curve = generate_membership_curve_from_segments(edited_segments.to_dict("records"), months)
-        
-        if membership_curve:
-            preview_df = pd.DataFrame({
-                "Month": list(range(1, len(membership_curve) + 1)),
-                "Members": membership_curve
-            })
-            st.line_chart(preview_df.set_index("Month")["Members"])
-            
-            # Store generated curve for later use
-            params_state["GENERATED_MEMBERSHIP_CURVE"] = membership_curve
-    
-    elif params_state["MEMBERSHIP_MODE"] == "calculated":
-        st.markdown("**Market Dynamics Calculation**")
-        st.caption("Membership calculated from market pools, acquisition rates, and churn - the original model approach.")
-        st.info("Configure market dynamics and member behavior in the sections below.")
-    
-    return params_state
-
-def generate_membership_curve_from_segments(segments: list, total_months: int) -> list:
-    """Generate membership curve from piecewise segments"""
-    import numpy as np
-    
-    curve = [0] * total_months
-    
-    for segment in segments:
-        start_month = int(segment["start_month"]) - 1  # Convert to 0-based
-        end_month = int(segment["end_month"]) - 1
-        start_members = float(segment["start_members"])
-        end_members = float(segment["end_members"])
-        growth_type = segment["type"]
-        
-        # Validate bounds
-        start_month = max(0, min(start_month, total_months - 1))
-        end_month = max(start_month, min(end_month, total_months - 1))
-        
-        if start_month >= end_month:
-            continue
-            
-        segment_length = end_month - start_month + 1
-        
-        if growth_type == "linear":
-            values = np.linspace(start_members, end_members, segment_length)
-        elif growth_type == "exponential":
-            if start_members > 0:
-                # Exponential growth from start_members to end_members
-                growth_rate = (end_members / start_members) ** (1 / (segment_length - 1))
-                values = [start_members * (growth_rate ** i) for i in range(segment_length)]
-            else:
-                # Fall back to linear if starting from 0
-                values = np.linspace(start_members, end_members, segment_length)
-        else:
-            values = np.linspace(start_members, end_members, segment_length)
-        
-        # Fill in the curve
-        for i, val in enumerate(values):
-            if start_month + i < total_months:
-                curve[start_month + i] = max(0, int(val))
-    
-    return curve
-
-def render_parameter_group(group_name: str, group_info: dict, params_state: dict) -> dict:
+def render_parameter_group(group_name: str, group_info: dict, params_state: dict, show_advanced: bool = False) -> dict:
     """Render a logical group of parameters - all parameters shown directly without nested sections"""
     
     # Get parameters for this group
@@ -1491,26 +1318,6 @@ def build_complete_overrides(params_state: dict) -> dict:
     
     overrides = {}
     
-    # Handle membership trajectory mode
-    membership_mode = params_state.get("MEMBERSHIP_MODE", "calculated")
-    overrides["MEMBERSHIP_MODE"] = membership_mode
-    
-    if membership_mode == "manual_table":
-        # Use manual membership table
-        manual_table = params_state.get("MANUAL_MEMBERSHIP_TABLE", [])
-        overrides["MANUAL_MEMBERSHIP_CURVE"] = manual_table
-        # Disable market dynamics when using manual curve
-        overrides["USE_MANUAL_MEMBERSHIP_CURVE"] = True
-        
-    elif membership_mode == "piecewise_trends":
-        # Use generated curve from piecewise segments
-        generated_curve = params_state.get("GENERATED_MEMBERSHIP_CURVE", [])
-        overrides["MANUAL_MEMBERSHIP_CURVE"] = generated_curve
-        overrides["USE_MANUAL_MEMBERSHIP_CURVE"] = True
-        
-    else:  # calculated mode
-        overrides["USE_MANUAL_MEMBERSHIP_CURVE"] = False
-    
     # Direct parameter mappings (most parameters)
     for param_name, value in params_state.items():
         if param_name in COMPLETE_PARAM_SPECS:
@@ -1608,98 +1415,6 @@ def build_complete_overrides(params_state: dict) -> dict:
     
     # Seasonality array
     seasonality_keys = [f"SEASONALITY_{month}" for month in ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]]
-    if all(k in params_state for k in seasonality_keys):
-        overrides["SEASONALITY_WEIGHTS"] = np.array([
-            params_state["SEASONALITY_JAN"], params_state["SEASONALITY_FEB"], params_state["SEASONALITY_MAR"],
-            params_state["SEASONALITY_APR"], params_state["SEASONALITY_MAY"], params_state["SEASONALITY_JUN"],
-            params_state["SEASONALITY_JUL"], params_state["SEASONALITY_AUG"], params_state["SEASONALITY_SEP"],
-            params_state["SEASONALITY_OCT"], params_state["SEASONALITY_NOV"], params_state["SEASONALITY_DEC"]
-        ])
-    
-    # Market pools and inflows (only needed for calculated mode)
-    if membership_mode == "calculated":
-        if all(k in params_state for k in ["NO_ACCESS_POOL", "HOME_POOL", "COMMUNITY_POOL"]):
-            overrides["MARKET_POOLS"] = {
-                "no_access": params_state["NO_ACCESS_POOL"],
-                "home_studio": params_state["HOME_POOL"],
-                "community_studio": params_state["COMMUNITY_POOL"]
-            }
-        
-        if all(k in params_state for k in ["NO_ACCESS_INFLOW", "HOME_INFLOW", "COMMUNITY_INFLOW"]):
-            overrides["MARKET_POOLS_INFLOW"] = {
-                "no_access": params_state["NO_ACCESS_INFLOW"],
-                "home_studio": params_state["HOME_INFLOW"],
-                "community_studio": params_state["COMMUNITY_INFLOW"]
-            }
-        
-        if all(k in params_state for k in ["BASELINE_RATE_NO_ACCESS", "BASELINE_RATE_HOME", "BASELINE_RATE_COMMUNITY"]):
-            overrides["POOL_BASE_INTENT"] = {
-                "no_access": params_state["BASELINE_RATE_NO_ACCESS"],
-                "home_studio": params_state["BASELINE_RATE_HOME"],  
-                "community_studio": params_state["BASELINE_RATE_COMMUNITY"]
-            }
-    
-    # Handle JSON text parameters (events)
-    if "ATTENDEES_PER_EVENT_RANGE" in params_state:
-        try:
-            overrides["ATTENDEES_PER_EVENT_RANGE"] = json.loads(params_state["ATTENDEES_PER_EVENT_RANGE"])
-        except (json.JSONDecodeError, TypeError):
-            overrides["ATTENDEES_PER_EVENT_RANGE"] = [8, 10, 12]  # Default
-    
-    if "EVENT_MUG_COST_RANGE" in params_state:
-        try:
-            overrides["EVENT_MUG_COST_RANGE"] = tuple(json.loads(params_state["EVENT_MUG_COST_RANGE"]))
-        except (json.JSONDecodeError, TypeError):
-            overrides["EVENT_MUG_COST_RANGE"] = (4.5, 7.5)  # Default
-    
-    # Economic environment parameters that need to be at top level
-    # (these are used directly by the simulator, not within SCENARIO_CONFIGS)
-    economic_params = [
-        "DOWNTURN_PROB_PER_MONTH", "DOWNTURN_JOIN_MULT", "DOWNTURN_CHURN_MULT",
-        "WOM_Q", "WOM_SATURATION", "REFERRAL_RATE_PER_MEMBER", "REFERRAL_CONV",
-        "AWARENESS_RAMP_MONTHS", "AWARENESS_RAMP_START_MULT", "AWARENESS_RAMP_END_MULT",
-        "ADOPTION_SIGMA", "CLASS_TERM_MONTHS", "CS_UNLOCK_FRACTION_PER_TERM",
-        "MAX_ONBOARDINGS_PER_MONTH", "CAPACITY_DAMPING_BETA", "UTILIZATION_CHURN_UPLIFT"
-    ]
-    
-    for param in economic_params:
-        if param in params_state:
-            overrides[param] = params_state[param]
-    
-    # Scenario config wrapper (required by simulator)
-    grant_amount = params_state.get("grant_amount", 0.0)
-    grant_month = params_state.get("grant_month", -1)
-    grant_month = None if grant_month == -1 else grant_month
-    
-    overrides["SCENARIO_CONFIGS"] = [{
-        "name": "User_Defined",
-        "grant_amount": grant_amount,
-        "grant_month": grant_month
-    }]
-    
-    
-    # Station capacities and utilization
-    if all(k in params_state for k in ["WHEELS_CAPACITY", "HANDBUILDING_CAPACITY", "GLAZE_CAPACITY"]):
-        overrides["STATIONS"] = {
-            "wheels": {
-                "capacity": params_state["WHEELS_CAPACITY"],
-                "alpha": params_state.get("WHEELS_ALPHA", 0.80),
-                "kappa": 2  # Default from original code
-            },
-            "handbuilding": {
-                "capacity": params_state["HANDBUILDING_CAPACITY"],
-                "alpha": params_state.get("HANDBUILDING_ALPHA", 0.50),
-                "kappa": 3.0  # Default from original code
-            },
-            "glaze": {
-                "capacity": params_state["GLAZE_CAPACITY"],
-                "alpha": params_state.get("GLAZE_ALPHA", 0.55),
-                "kappa": 2.6  # Default from original code
-            }
-        }
-    
-    # Seasonality array
-    seasonality_keys = [f"SEASONALITY_{month}" for month in ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"]]
     if all(k in params_state for k in seasonality_keys):
         overrides["SEASONALITY_WEIGHTS"] = np.array([
             params_state["SEASONALITY_JAN"], params_state["SEASONALITY_FEB"], params_state["SEASONALITY_MAR"],
@@ -1846,13 +1561,9 @@ def render_complete_ui():
     
     for group_name, group_info in groups_by_priority:
         with st.expander(group_info["title"], expanded=(group_info["priority"] <= 4)):
-            if group_name == "membership_trajectory":
-                # Special handling for membership trajectory
-                st.session_state.params_state = render_membership_trajectory(st.session_state.params_state)
-            else:
-                st.session_state.params_state = render_parameter_group(
-                    group_name, group_info, st.session_state.params_state
-                )
+            st.session_state.params_state = render_parameter_group(
+                group_name, group_info, st.session_state.params_state
+            )
     
     # Equipment configuration (special handling)
     with st.expander("🔧 Equipment & Capital Expenditures", expanded=False):
@@ -1861,14 +1572,14 @@ def render_complete_ui():
         
         # Default equipment configuration
         default_capex = [
-            {"enabled": True,  "label": "Kiln #1 Skutt 1227", "count": 1,  "unit_cost": 7000, "month": 0,    "member_threshold": None, "finance_504": True},
-            {"enabled": True,  "label": "Pottery Wheels",     "count": 4,  "unit_cost": 800,  "month": 0,    "member_threshold": None, "finance_504": True},
-            {"enabled": True,  "label": "Wire Racks",         "count": 10, "unit_cost": 100,  "month": 0,    "member_threshold": None, "finance_504": True},
-            {"enabled": True,  "label": "Clay Traps",         "count": 1,  "unit_cost": 400,  "month": 0,    "member_threshold": None, "finance_504": True},
-            {"enabled": False, "label": "Kiln #2 Skutt 1427", "count": 1,  "unit_cost": 9000, "month": 6,    "member_threshold": None, "finance_504": True},
-            {"enabled": False, "label": "Slab Roller",        "count": 1,  "unit_cost": 3000, "month": None, "member_threshold": 50,   "finance_504": True},
-            {"enabled": False, "label": "Pug Mill",           "count": 1,  "unit_cost": 4500, "month": None, "member_threshold": 75,   "finance_504": True},
-         ]
+            {"enabled": True, "label": "Kiln #1 Skutt 1227", "count": 1, "unit_cost": 7000, "month": 0, "member_threshold": None, "finance_504": True},
+            {"enabled": True, "label": "Pottery Wheels", "count": 12, "unit_cost": 800, "month": 0, "member_threshold": None, "finance_504": True},
+            {"enabled": True, "label": "Wire Racks", "count": 15, "unit_cost": 150, "month": 0, "member_threshold": None, "finance_504": True},
+            {"enabled": True, "label": "Clay Traps", "count": 4, "unit_cost": 400, "month": 0, "member_threshold": None, "finance_504": True},
+            {"enabled": False, "label": "Kiln #2 Skutt 1427", "count": 1, "unit_cost": 10000, "month": 6, "member_threshold": None, "finance_504": True},
+            {"enabled": False, "label": "Slab Roller", "count": 1, "unit_cost": 1800, "month": None, "member_threshold": 50, "finance_504": True},
+            {"enabled": False, "label": "Pug Mill", "count": 1, "unit_cost": 3500, "month": None, "member_threshold": 75, "finance_504": True},
+        ]
         
         if "CAPEX_ITEMS" not in st.session_state.params_state:
             st.session_state.params_state["CAPEX_ITEMS"] = default_capex
@@ -1886,68 +1597,13 @@ def render_complete_ui():
                 "count": st.column_config.NumberColumn("Quantity", min_value=1, step=1, help="Number of units"),
                 "unit_cost": st.column_config.NumberColumn("Unit Cost ($)", min_value=0, step=100, help="Cost per unit"),
                 "month": st.column_config.NumberColumn("Trigger Month", min_value=0, step=1, help="Month to purchase (0=immediate, leave blank for member-based)"),
-                "member_threshold": st.column_config.NumberColumn("Member Threshold", min_value=0, step=1, help="Member count to trigger purchase (leave blank for month-based)"),
+                "member_threshold": st.column_config.NumberColumn("Member Trigger", min_value=0, step=1, help="Member count to trigger purchase (leave blank for month-based)"),
                 "finance_504": st.column_config.CheckboxColumn("SBA 504", help="Finance through SBA 504 loan")
             }
         )
         
         # Update session state
         st.session_state.params_state["CAPEX_ITEMS"] = edited_df.to_dict("records")
-
-    # Firing fee schedule (special handling)
-    with st.expander("🔥 Firing Fee Schedule (per-lb tiers)", expanded=False):
-        st.markdown("**Define a tiered per-lb firing fee schedule**")
-        st.caption("Each row is a tier. 'Up to lbs' is the upper bound for that tier (leave blank for the last, open-ended tier). 'Rate' is $/lb.")
-        # Default schedule
-        default_sched = [
-            {"up_to_lbs": 20, "rate": 3.0},
-            {"up_to_lbs": 40, "rate": 4.0},
-            {"up_to_lbs": None, "rate": 5.0},
-        ]
-        if "FIRING_FEE_SCHEDULE" not in st.session_state.params_state:
-            st.session_state.params_state["FIRING_FEE_SCHEDULE"] = default_sched
-        sched_df = pd.DataFrame(st.session_state.params_state["FIRING_FEE_SCHEDULE"])
-        edited_sched = st.data_editor(
-            sched_df,
-            num_rows="dynamic",
-            use_container_width=True,
-            column_config={
-                "up_to_lbs": st.column_config.NumberColumn("Up to lbs", min_value=0, step=1, help="Upper bound for this tier (blank = no upper bound)"),
-                "rate": st.column_config.NumberColumn("Rate ($/lb)", min_value=0.0, step=0.5, help="Charge per lb within this tier"),
-            }
-        )
-        # Clean and validate
-        recs = edited_sched.to_dict("records")
-        cleaned = []
-        last = -1
-        for r in recs:
-            up = r.get("up_to_lbs", None)
-            if up == "" or up is None:
-                up = None
-            else:
-                try:
-                    up = int(up)
-                except Exception:
-                    up = None
-            rate = r.get("rate", None)
-            try:
-                rate = float(rate) if rate is not None else None
-            except Exception:
-                rate = None
-            if rate is None:
-                continue
-            # enforce strictly increasing bounds
-            if up is not None and up <= last:
-                up = last + 1
-            cleaned.append({"up_to_lbs": up, "rate": rate})
-            if up is not None:
-                last = up
-        # Ensure final open tier
-        if cleaned and cleaned[-1]["up_to_lbs"] is not None:
-            cleaned.append({"up_to_lbs": None, "rate": cleaned[-1]["rate"]})
-        st.session_state.params_state["FIRING_FEE_SCHEDULE"] = cleaned
-
-
     
     # Run simulation
     if run_simulation:
@@ -1966,12 +1622,6 @@ def render_complete_ui():
                 if "CAPEX_ITEMS" in st.session_state.params_state:
                     overrides["CAPEX_ITEMS"] = _normalize_capex_items(pd.DataFrame(st.session_state.params_state["CAPEX_ITEMS"]))
                 
-                # Add firing fee schedule
-                if "FIRING_FEE_SCHEDULE" in st.session_state.params_state:
-                    # Pass as a native list of dicts; simulator also supports JSON string
-                    import json as _json  # available for any future JSON encoding
-                    overrides["FIRING_FEE_SCHEDULE"] = st.session_state.params_state["FIRING_FEE_SCHEDULE"]
-
                 # Run simulation with figure capture
                 with FigureCapture("User Defined Scenario") as cap:
                     results = run_original_once("modular_simulator.py", overrides)

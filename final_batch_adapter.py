@@ -90,6 +90,8 @@ ALLOWED_OVERRIDES: Dict[str, str] = {
     "N_RACKS_START": "N_RACKS_START",
     "HAS_PUG_MILL_START": "HAS_PUG_MILL_START",
     "N_CLAY_TRAPS_START": "N_CLAY_TRAPS_START",
+        # firing fee tiers
+    "FIRING_FEE_SCHEDULE": "FIRING_FEE_SCHEDULE",
 
 }
 
