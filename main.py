@@ -1833,29 +1833,6 @@ def render_complete_ui():
                     group_name, group_info, st.session_state.params_state
                 )
     
-    # --- Run form at bottom ---
-    with st.form("run_form"):
-        st.subheader("Run simulation")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.session_state.params_state["MONTHS"] = st.slider(
-                "Simulation horizon (months)", 12, 120,
-                int(st.session_state.params_state.get("MONTHS", 60)), 6
-            )
-        with c2:
-            st.session_state.params_state["N_SIMULATIONS"] = st.slider(
-                "Monte Carlo draws", 1, 2000,
-                int(st.session_state.params_state.get("N_SIMULATIONS", 100)), 1
-            )
-        with c3:
-            st.session_state.params_state["RANDOM_SEED"] = st.number_input(
-                "Random seed", 1, 999999,
-                int(st.session_state.params_state.get("RANDOM_SEED", 42))
-            )
-
-        run_simulation = st.form_submit_button("🚀 Run Simulation", type="primary")
-    
-    
     # Equipment configuration (special handling)
     with st.expander("🔧 Equipment & Capital Expenditures", expanded=False):
         st.markdown("**Equipment purchase schedule**")
@@ -1949,7 +1926,27 @@ def render_complete_ui():
             cleaned.append({"up_to_lbs": None, "rate": cleaned[-1]["rate"]})
         st.session_state.params_state["FIRING_FEE_SCHEDULE"] = cleaned
 
+# --- Run form at bottom ---
+    with st.form("run_form"):
+        st.subheader("Run simulation")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.session_state.params_state["MONTHS"] = st.slider(
+                "Simulation horizon (months)", 12, 120,
+                int(st.session_state.params_state.get("MONTHS", 60)), 6
+            )
+        with c2:
+            st.session_state.params_state["N_SIMULATIONS"] = st.slider(
+                "Monte Carlo draws", 1, 2000,
+                int(st.session_state.params_state.get("N_SIMULATIONS", 100)), 1
+            )
+        with c3:
+            st.session_state.params_state["RANDOM_SEED"] = st.number_input(
+                "Random seed", 1, 999999,
+                int(st.session_state.params_state.get("RANDOM_SEED", 42))
+            )
 
+        run_simulation = st.form_submit_button("🚀 Run Simulation", type="primary")
     
     # Run simulation
     if run_simulation:
