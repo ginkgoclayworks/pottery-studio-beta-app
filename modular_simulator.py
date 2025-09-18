@@ -863,6 +863,16 @@ except NameError:
         {"up_to_lbs": None, "rate": 5.0},
     ]
 
+# --- Manual membership curve override (UI/adapter can set these) ---
+try:
+    USE_MANUAL_MEMBERSHIP_CURVE
+except NameError:
+    USE_MANUAL_MEMBERSHIP_CURVE = False
+try:
+    MANUAL_MEMBERSHIP_CURVE
+except NameError:
+    MANUAL_MEMBERSHIP_CURVE = []
+
 def compute_firing_fee(clay_lbs):
     """
     Compute firing fee revenue from lbs, using overridable tier schedule.
@@ -1621,6 +1631,37 @@ def _core_simulation_and_reports():
                                 kept.append(m)
     
                         active_members = kept
+
+                        # If UI provided a manual membership curve, enforce target headcount this month
+                        try:
+                            _use_manual = bool(globals().get("USE_MANUAL_MEMBERSHIP_CURVE", False))
+                            _manual_curve = globals().get("MANUAL_MEMBERSHIP_CURVE", None)
+                        except Exception:
+                            _use_manual, _manual_curve = False, None
+                        if _use_manual and isinstance(_manual_curve, (list, tuple)) and month < len(_manual_curve):
+                            target_n = int(max(0, float(_manual_curve[month])))
+                            cur_n = len(active_members)
+                            if target_n > cur_n:
+                                # add delta members using archetype mix
+                                delta = target_n - cur_n
+                                probs = [v["prob"] for v in MEMBER_ARCHETYPES.values()]
+                                labels = list(MEMBER_ARCHETYPES.keys())
+                                for _ in range(delta):
+                                    arch = rng.choice(labels, p=probs)
+                                    active_members.append({
+                                        "type": arch,
+                                        "start_month": month,
+                                        "monthly_fee": float(price),
+                                        "clay_bags": MEMBER_ARCHETYPES[arch]["clay_bags"],
+                                        "src": "manual"
+                                    })
+                            elif target_n < cur_n:
+                                # randomly remove surplus to hit target
+                                delta = cur_n - target_n
+                                if delta > 0:
+                                    drop_idx = set(rng.choice(np.arange(cur_n), size=delta, replace=False).tolist())
+                                    
+                    
                         departures = before - len(active_members)
                         net_adds = joins - departures
     

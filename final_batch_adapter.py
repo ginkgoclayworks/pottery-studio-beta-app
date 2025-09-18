@@ -92,7 +92,9 @@ ALLOWED_OVERRIDES: Dict[str, str] = {
     "N_CLAY_TRAPS_START": "N_CLAY_TRAPS_START",
         # firing fee tiers
     "FIRING_FEE_SCHEDULE": "FIRING_FEE_SCHEDULE",
-
+    # manual membership curve override
+    "USE_MANUAL_MEMBERSHIP_CURVE": "USE_MANUAL_MEMBERSHIP_CURVE",
+    "MANUAL_MEMBERSHIP_CURVE": "MANUAL_MEMBERSHIP_CURVE",
 }
 
 
