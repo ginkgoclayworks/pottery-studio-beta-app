@@ -1633,6 +1633,8 @@ def _core_simulation_and_reports():
                         active_members = kept
 
                         # If UI provided a manual membership curve, enforce target headcount this month
+                        manual_added = 0
+                        manual_removed = 0
                         try:
                             _use_manual = bool(globals().get("USE_MANUAL_MEMBERSHIP_CURVE", False))
                             _manual_curve = globals().get("MANUAL_MEMBERSHIP_CURVE", None)
@@ -1644,8 +1646,11 @@ def _core_simulation_and_reports():
                             if target_n > cur_n:
                                 # add delta members using archetype mix
                                 delta = target_n - cur_n
-                                probs = [v["prob"] for v in MEMBER_ARCHETYPES.values()]
                                 labels = list(MEMBER_ARCHETYPES.keys())
+                                probs = np.array([MEMBER_ARCHETYPES[k].get("prob", 0.0) for k in labels], dtype=float)
+                                s = probs.sum()
+                                probs = (probs / s) if s > 0 else np.full(len(labels), 1.0 / max(1, len(labels)))
+
                                 for _ in range(delta):
                                     arch = rng.choice(labels, p=probs)
                                     active_members.append({
@@ -1655,16 +1660,19 @@ def _core_simulation_and_reports():
                                         "clay_bags": MEMBER_ARCHETYPES[arch]["clay_bags"],
                                         "src": "manual"
                                     })
+                                manual_added = delta
                             elif target_n < cur_n:
                                 # randomly remove surplus to hit target
                                 delta = cur_n - target_n
                                 if delta > 0:
                                     drop_idx = set(rng.choice(np.arange(cur_n), size=delta, replace=False).tolist())
-                                    
+                                    active_members = [m for i, m in enumerate(active_members) if i not in drop_idx]
+                                    manual_removed = delta                                    
                     
-                        departures = before - len(active_members)
-                        net_adds = joins - departures
-    
+                        # Include churn plus any manual removals; count manual additions as joins for accounting
+                        departures = (before - len(kept)) + manual_removed
+                        net_adds = (joins + manual_added) - departures
+
                         # Revenues — membership, clay, firing, events
                         revenue_membership = sum(m["monthly_fee"] for m in active_members)
                         revenue_clay = 0.0  #gross; net margin after COGS below
