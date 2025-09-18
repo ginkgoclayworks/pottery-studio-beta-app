@@ -1215,7 +1215,7 @@ PARAMETER_GROUPS = {
 
 # PARAMETER RENDERING FUNCTIONS
 def render_parameter_group(group_name: str, group_info: dict, params_state: dict, show_advanced: bool = False) -> dict:
-    """Render a logical group of parameters with progressive disclosure"""
+    """Render a logical group of parameters - all parameters shown directly without nested sections"""
     
     # Get parameters for this group
     group_params = {k: v for k, v in COMPLETE_PARAM_SPECS.items() if v.get("group") == group_name}
@@ -1223,33 +1223,15 @@ def render_parameter_group(group_name: str, group_info: dict, params_state: dict
     if not group_params:
         return params_state
     
-    # Sort by parameter importance (basic vs advanced)
-    basic_params = []
-    advanced_params = []
-    
-    for param_name, spec in group_params.items():
-        # Heuristic: core business params are basic, detailed tuning params are advanced
-        if group_name in ["business_fundamentals", "pricing", "capacity", "fixed_costs"] or "ENABLED" in param_name:
-            basic_params.append(param_name)
-        else:
-            advanced_params.append(param_name)
-    
     # Group header
     color_indicator = {"green": "🟢", "amber": "🟡", "red": "🔴", "blue": "🔵"}.get(group_info["color"], "⚪")
     st.markdown(f"**{group_info['title']}**")
     st.caption(f"{color_indicator} {group_info['desc']}")
     
-    # Always show basic parameters
-    for param_name in sorted(basic_params):
+    # Show all parameters for this group directly (no nested advanced sections)
+    for param_name in sorted(group_params.keys()):
         spec = COMPLETE_PARAM_SPECS[param_name]
         params_state[param_name] = render_single_parameter(param_name, spec, params_state.get(param_name))
-    
-    # Advanced parameters in expander
-    if advanced_params:
-        with st.expander("🔧 Advanced Settings", expanded=False):
-            for param_name in sorted(advanced_params):
-                spec = COMPLETE_PARAM_SPECS[param_name]
-                params_state[param_name] = render_single_parameter(param_name, spec, params_state.get(param_name))
     
     return params_state
 
@@ -1611,13 +1593,24 @@ def render_complete_ui():
     
     # Run simulation
     if run_simulation:
+        # Clear any existing cache to ensure fresh run
+        try:
+            st.cache_data.clear()
+        except:
+            pass
+            
         with st.spinner("Running Monte Carlo simulation..."):
             try:
                 # Build overrides from UI state
                 overrides = build_complete_overrides(st.session_state.params_state)
                 
-                # Run simulation
-                results = run_original_once("modular_simulator.py", overrides)
+                # Add equipment items
+                if "CAPEX_ITEMS" in st.session_state.params_state:
+                    overrides["CAPEX_ITEMS"] = _normalize_capex_items(pd.DataFrame(st.session_state.params_state["CAPEX_ITEMS"]))
+                
+                # Run simulation with figure capture
+                with FigureCapture("User Defined Scenario") as cap:
+                    results = run_original_once("modular_simulator.py", overrides)
                 
                 if isinstance(results, tuple):
                     df, eff = results
@@ -1629,6 +1622,11 @@ def render_complete_ui():
                     st.error("Simulation returned no results. Check parameter values and try again.")
                     return
                 
+                # Store results in session state
+                st.session_state["simulation_results"] = df
+                st.session_state["simulation_images"] = cap.images
+                st.session_state["simulation_manifest"] = cap.manifest
+                
                 # Display results
                 st.success(f"Simulation completed: {len(df)} result rows generated")
                 
@@ -1636,37 +1634,142 @@ def render_complete_ui():
                 col1, col2, col3, col4 = st.columns(4)
                 
                 final_month = df["month"].max()
-                final_cash = df[df["month"] == final_month]["cash_balance"]
+                final_data = df[df["month"] == final_month]
+                
+                # Survival rate - check if any simulation went negative
                 survival_rate = (df.groupby("simulation_id")["cash_balance"].min() >= 0).mean()
                 
                 col1.metric("Survival Rate", f"{survival_rate:.1%}")
-                col2.metric("Median Final Cash", f"${final_cash.median():,.0f}")
+                col2.metric("Median Final Cash", f"${final_data['cash_balance'].median():,.0f}")
                 
                 if "active_members" in df.columns:
-                    final_members = df[df["month"] == final_month]["active_members"]
-                    col3.metric("Median Final Members", f"{final_members.median():.0f}")
+                    col3.metric("Median Final Members", f"{final_data['active_members'].median():.0f}")
                 
                 if "dscr" in df.columns:
-                    final_dscr = df[df["month"] == final_month]["dscr"]
+                    final_dscr = final_data["dscr"].replace([np.inf, -np.inf], np.nan)
                     col4.metric("Median Final DSCR", f"{final_dscr.median():.2f}")
-                
-                # Charts will be captured by existing plotting code in simulator
-                st.subheader("Simulation Results")
-                st.dataframe(df.head(100))
-                
-                # Download results
-                csv_buffer = io.StringIO()
-                df.to_csv(csv_buffer, index=False)
-                st.download_button(
-                    "Download Results CSV",
-                    data=csv_buffer.getvalue(),
-                    file_name=f"gcws_simulation_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
-                )
                 
             except Exception as e:
                 st.error(f"Simulation failed: {e}")
                 st.exception(e)
+                return
+    
+    # Display results if available
+    if "simulation_results" in st.session_state:
+        df = st.session_state["simulation_results"]
+        images = st.session_state.get("simulation_images", [])
+        manifest = st.session_state.get("simulation_manifest", [])
+        
+        # Display captured visualizations
+        if images:
+            st.header("📊 Simulation Analysis Charts")
+            st.markdown("The following charts were generated during the simulation analysis:")
+            
+            for fname, img_data in images:
+                # Find corresponding manifest entry for title
+                img_title = fname
+                for entry in manifest:
+                    if entry["file"] == fname:
+                        img_title = entry.get("title", fname)
+                        break
+                
+                st.image(img_data, caption=img_title, use_container_width=True)
+            
+            # Download bundle
+            if images:
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+                    for fname, data in images:
+                        zf.writestr(fname, data)
+                
+                st.download_button(
+                    "📦 Download All Charts (ZIP)",
+                    data=buf.getvalue(),
+                    file_name=f"gcws_charts_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                    mime="application/zip"
+                )
+        
+        # Summary statistics table
+        st.header("📈 Detailed Results")
+        
+        # Compute key statistics by simulation
+        summary_stats = []
+        for sim_id in df["simulation_id"].unique():
+            sim_data = df[df["simulation_id"] == sim_id]
+            
+            # Key metrics per simulation
+            min_cash = sim_data["cash_balance"].min()
+            final_cash = sim_data[sim_data["month"] == sim_data["month"].max()]["cash_balance"].iloc[0]
+            final_members = sim_data[sim_data["month"] == sim_data["month"].max()]["active_members"].iloc[0] if "active_members" in sim_data.columns else 0
+            
+            # Break-even analysis
+            cumulative_profit = sim_data.get("cumulative_op_profit", pd.Series([0]))
+            breakeven_month = cumulative_profit[cumulative_profit >= 0].index
+            breakeven_month = sim_data.loc[breakeven_month].iloc[0]["month"] if len(breakeven_month) > 0 else None
+            
+            summary_stats.append({
+                "simulation_id": sim_id,
+                "min_cash": min_cash,
+                "final_cash": final_cash,
+                "final_members": final_members,
+                "breakeven_month": breakeven_month,
+                "survival": min_cash >= 0
+            })
+        
+        summary_df = pd.DataFrame(summary_stats)
+        
+        # Display key percentiles
+        st.subheader("Key Risk Metrics")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("10th Percentile Min Cash", f"${summary_df['min_cash'].quantile(0.1):,.0f}")
+            st.metric("50th Percentile Min Cash", f"${summary_df['min_cash'].quantile(0.5):,.0f}")
+            st.metric("90th Percentile Min Cash", f"${summary_df['min_cash'].quantile(0.9):,.0f}")
+        
+        with col2:
+            st.metric("10th Percentile Final Cash", f"${summary_df['final_cash'].quantile(0.1):,.0f}")
+            st.metric("50th Percentile Final Cash", f"${summary_df['final_cash'].quantile(0.5):,.0f}")
+            st.metric("90th Percentile Final Cash", f"${summary_df['final_cash'].quantile(0.9):,.0f}")
+            
+        with col3:
+            if summary_df['breakeven_month'].notna().any():
+                be_months = summary_df['breakeven_month'].dropna()
+                st.metric("10th Percentile Breakeven", f"{be_months.quantile(0.1):.0f} months" if len(be_months) > 0 else "Never")
+                st.metric("50th Percentile Breakeven", f"{be_months.quantile(0.5):.0f} months" if len(be_months) > 0 else "Never")
+                st.metric("90th Percentile Breakeven", f"{be_months.quantile(0.9):.0f} months" if len(be_months) > 0 else "Never")
+        
+        # Raw data download and display
+        st.subheader("Raw Simulation Data")
+        
+        # Download options
+        col1, col2 = st.columns(2)
+        with col1:
+            csv_buffer = io.StringIO()
+            df.to_csv(csv_buffer, index=False)
+            st.download_button(
+                "📄 Download Full Results (CSV)",
+                data=csv_buffer.getvalue(),
+                file_name=f"gcws_simulation_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+        
+        with col2:
+            summary_buffer = io.StringIO()
+            summary_df.to_csv(summary_buffer, index=False)
+            st.download_button(
+                "📊 Download Summary Stats (CSV)",
+                data=summary_buffer.getvalue(),
+                file_name=f"gcws_summary_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+        
+        # Display sample of raw data
+        st.dataframe(df.head(200), use_container_width=True)
+        
+        if len(df) > 200:
+            st.caption(f"Showing first 200 of {len(df)} total rows. Download CSV for complete data.")
 
 # HELPER FUNCTIONS FROM ORIGINAL CODE
 def pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
