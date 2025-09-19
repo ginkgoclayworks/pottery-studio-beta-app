@@ -2548,58 +2548,43 @@ def render_complete_ui():
             # --- NEW: prefill session with calculated values, but allow overrides
             calc_504 = int(loan_metrics.get("total_504_amount", 0) or 0)
             calc_7a  = int(loan_metrics.get("total_7a_amount", 0) or 0)
-            if "loan_504_amount" not in st.session_state:
-                st.session_state.loan_504_amount = calc_504
-            if "loan_7a_amount" not in st.session_state:
-                st.session_state.loan_7a_amount = calc_7a
+            # Effective principals used in results: override if >0 else suggestion
+            override_504 = int(params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0) or 0)
+            override_7a  = int(params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0) or 0)
+            used_504 = override_504 if override_504 > 0 else calc_504
+            used_7a  = override_7a  if override_7a  > 0 else calc_7a
 
             col1, col2 = st.columns(2)
             
             with col1:
                 st.subheader("SBA 504 Loan (CapEx)")
-                # --- NEW: visible, editable 504 field (pre-filled with calculated value)
-                total_504 = st.number_input(
-                    "SBA 504 Total Loan Ask ($)",
-                    key="ui_total_504_amount",
-                    min_value=0,
-                    step=1000,
-                    value=int(st.session_state.loan_504_amount),
-                    help="Pre-filled from calculated 504-eligible CapEx. Edit to override."
+                # READ-ONLY display of the amount used (no +/- spinner)
+                st.caption("SBA 504 Total Loan Ask ($)")
+                st.markdown(f"### ${used_504:,.0f}")
+                st.metric(
+                    "Used Loan Amount (Override)" if override_504 > 0 else "Used Loan Amount (Auto-calc)",
+                    f"${used_504:,.0f}"
                 )
-                # keep session in sync
-                st.session_state.loan_504_amount = int(total_504)
-                               
-                override_504 = params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0)
-                if override_504 > 0:
-                    st.metric("Used Loan Amount (Override)", f"${total_504:,.0f}")
-                else:
-                    st.metric("Used Loan Amount (Auto-calc)", f"${total_504:,.0f}")
                 st.metric("Interest-Only Payment", f"${loan_metrics['io_payment_504']:,.0f}/month")
                 st.metric("Amortizing Payment", f"${loan_metrics['amort_payment_504']:,.0f}/month")
             
             with col2:
                 st.subheader("SBA 7(a) Loan (OpEx)")
-# --- NEW: visible, editable 7(a) field (pre-filled with calculated value)
-                total_7a = st.number_input(
-                    "SBA 7(a) Total Loan Ask ($)",
-                    key="ui_total_7a_amount",
-                    min_value=0,
-                    step=1000,
-                    value=int(st.session_state.loan_7a_amount),
-                    help="Pre-filled from calculated working-capital/fit. Edit to override."
+                # READ-ONLY display of the amount used (no +/- spinner)
+                st.caption("SBA 7(a) Total Loan Ask ($)")
+                st.markdown(f"### ${used_7a:,.0f}")
+                st.metric(
+                    "Used Loan Amount (Override)" if override_7a > 0 else "Used Loan Amount (Auto-calc)",
+                    f"${used_7a:,.0f}"
                 )
-                # keep session in sync
-                st.session_state.loan_7a_amount = int(total_7a)
-                
-                
-                override_7a = params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0)
-                if override_7a > 0:
-                    st.metric("Used Loan Amount (Override)", f"${total_7a:,.0f}")
-                else:
-                    st.metric("Used Loan Amount (Auto-calc)", f"${total_7a:,.0f}")
                 st.metric("Interest-Only Payment", f"${loan_metrics['io_payment_7a']:,.0f}/month")
                 st.metric("Amortizing Payment", f"${loan_metrics['amort_payment_7a']:,.0f}/month")
             
+            
+            # Keep legacy variable names for code below
+            total_504 = used_504
+            total_7a  = used_7a
+
             # Total debt service
             st.subheader("Combined Debt Service")
             total_io = loan_metrics['io_payment_504'] + loan_metrics['io_payment_7a']
