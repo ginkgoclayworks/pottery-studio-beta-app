@@ -2477,6 +2477,9 @@ def render_complete_ui():
         
         # Enhanced Loan Amount Displays
         with st.expander("💰 Loan Amount Summary", expanded=True):
+            # Ensure loan metrics are available in this scope
+            params_state = st.session_state.params_state
+            loan_metrics = calculate_loan_metrics(df, params_state)
             col1, col2 = st.columns(2)
             
             with col1:
