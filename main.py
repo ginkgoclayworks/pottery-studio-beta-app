@@ -17,6 +17,14 @@ from final_batch_adapter import run_original_once
 from sba_export import export_to_sba_workbook
 import os
 
+def pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    """Find first available column from candidates list"""
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
 # COMPLETE PARAMETER SPECIFICATIONS - ALL MODEL VARIABLES
 COMPLETE_PARAM_SPECS = {
     # =============================================================================
@@ -1227,7 +1235,416 @@ PARAMETER_GROUPS = {
     }
 }
 
+def calculate_loan_metrics(df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Calculate comprehensive loan analysis metrics from simulation results"""
+    
+    # Extract loan parameters
+    loan_504_rate = params.get("LOAN_504_ANNUAL_RATE", 0.070)
+    loan_7a_rate = params.get("LOAN_7A_ANNUAL_RATE", 0.115)
+    loan_504_term = params.get("LOAN_504_TERM_YEARS", 20)
+    loan_7a_term = params.get("LOAN_7A_TERM_YEARS", 7)
+    io_months_504 = params.get("IO_MONTHS_504", 6)
+    io_months_7a = params.get("IO_MONTHS_7A", 6)
+    
+    # Estimate loan amounts from equipment and working capital needs
+    capex_items = params.get("CAPEX_ITEMS", [])
+    total_504_amount = sum(item.get("unit_cost", 0) * item.get("count", 1) 
+                          for item in capex_items 
+                          if item.get("enabled", True) and item.get("finance_504", True))
+    
+    # Apply contingency
+    contingency = params.get("LOAN_CONTINGENCY_PCT", 0.08)
+    total_504_amount *= (1 + contingency)
+    
+    # Estimate 7(a) amount from operating runway
+    runway_months = params.get("RUNWAY_MONTHS", 12)
+    monthly_opex = params.get("RENT", 3500) + params.get("INSURANCE_COST", 75) + params.get("GLAZE_COST_PER_MONTH", 833)
+    extra_buffer = params.get("EXTRA_BUFFER", 10000)
+    total_7a_amount = (monthly_opex * runway_months) + extra_buffer
+    
+    # Calculate monthly payments
+    def calculate_monthly_payment(principal, annual_rate, term_years, io_months=0):
+        """Calculate monthly payment for loan with optional interest-only period"""
+        monthly_rate = annual_rate / 12
+        if monthly_rate == 0:
+            return principal / (term_years * 12 - io_months)
+        
+        # Interest-only payment during IO period
+        io_payment = principal * monthly_rate if io_months > 0 else 0
+        
+        # Amortizing payment after IO period
+        amort_months = term_years * 12 - io_months
+        if amort_months <= 0:
+            return principal / (term_years * 12)
+            
+        amort_payment = principal * (monthly_rate * (1 + monthly_rate)**amort_months) / ((1 + monthly_rate)**amort_months - 1)
+        
+        return io_payment, amort_payment
+    
+    # Calculate payments for both loans
+    payments_504 = calculate_monthly_payment(total_504_amount, loan_504_rate, loan_504_term, io_months_504)
+    payments_7a = calculate_monthly_payment(total_7a_amount, loan_7a_rate, loan_7a_term, io_months_7a)
+    
+    if isinstance(payments_504, tuple):
+        io_payment_504, amort_payment_504 = payments_504
+    else:
+        io_payment_504, amort_payment_504 = 0, payments_504
+        
+    if isinstance(payments_7a, tuple):
+        io_payment_7a, amort_payment_7a = payments_7a
+    else:
+        io_payment_7a, amort_payment_7a = 0, payments_7a
+    
+    # Calculate outstanding balances over time
+    months = len(df[df["simulation_id"] == df["simulation_id"].iloc[0]])
+    outstanding_504 = []
+    outstanding_7a = []
+    monthly_payments_504 = []
+    monthly_payments_7a = []
+    
+    balance_504 = total_504_amount
+    balance_7a = total_7a_amount
+    
+    for month in range(1, months + 1):
+        # 504 loan
+        if month <= io_months_504:
+            payment_504 = io_payment_504
+            principal_payment_504 = 0
+        else:
+            payment_504 = amort_payment_504
+            principal_payment_504 = payment_504 - (balance_504 * loan_504_rate / 12)
+            balance_504 = max(0, balance_504 - principal_payment_504)
+        
+        # 7(a) loan
+        if month <= io_months_7a:
+            payment_7a = io_payment_7a
+            principal_payment_7a = 0
+        else:
+            payment_7a = amort_payment_7a
+            principal_payment_7a = payment_7a - (balance_7a * loan_7a_rate / 12)
+            balance_7a = max(0, balance_7a - principal_payment_7a)
+        
+        outstanding_504.append(balance_504)
+        outstanding_7a.append(balance_7a)
+        monthly_payments_504.append(payment_504)
+        monthly_payments_7a.append(payment_7a)
+    
+    return {
+        "total_504_amount": total_504_amount,
+        "total_7a_amount": total_7a_amount,
+        "io_payment_504": io_payment_504,
+        "amort_payment_504": amort_payment_504,
+        "io_payment_7a": io_payment_7a,
+        "amort_payment_7a": amort_payment_7a,
+        "outstanding_504": outstanding_504,
+        "outstanding_7a": outstanding_7a,
+        "monthly_payments_504": monthly_payments_504,
+        "monthly_payments_7a": monthly_payments_7a,
+    }
+
+def calculate_dscr_metrics(df: pd.DataFrame) -> Dict[str, Any]:
+    """Calculate DSCR analysis metrics from simulation results"""
+    
+    # Find DSCR column
+    dscr_col = pick_col(df, ["dscr", "debt_service_coverage_ratio", "DSCR"])
+    
+    if not dscr_col:
+        return {"error": "No DSCR data found in simulation results"}
+    
+    # Clean DSCR data - replace infinite values
+    dscr_data = df[dscr_col].replace([np.inf, -np.inf], np.nan).dropna()
+    
+    if dscr_data.empty:
+        return {"error": "No valid DSCR data available"}
+    
+    # Multi-timepoint analysis (Years 1, 2, 3, 5)
+    timepoint_analysis = {}
+    for year in [1, 2, 3, 5]:
+        month = year * 12
+        year_data = df[df["month"] == month][dscr_col].replace([np.inf, -np.inf], np.nan).dropna()
+        
+        if not year_data.empty:
+            timepoint_analysis[f"year_{year}"] = {
+                "mean": year_data.mean(),
+                "median": year_data.median(),
+                "p10": year_data.quantile(0.1),
+                "p25": year_data.quantile(0.25),
+                "p75": year_data.quantile(0.75),
+                "p90": year_data.quantile(0.9),
+                "below_125": (year_data < 1.25).mean(),
+                "below_100": (year_data < 1.0).mean(),
+                "count": len(year_data)
+            }
+    
+    # Risk assessment - percentage below critical thresholds
+    risk_assessment = {
+        "below_125_pct": (dscr_data < 1.25).mean() * 100,
+        "below_100_pct": (dscr_data < 1.0).mean() * 100,
+        "mean_dscr": dscr_data.mean(),
+        "median_dscr": dscr_data.median(),
+        "std_dscr": dscr_data.std(),
+        "min_dscr": dscr_data.min(),
+        "max_dscr": dscr_data.max()
+    }
+    
+    # DSCR evolution by month (for trending)
+    dscr_evolution = df.groupby("month")[dscr_col].agg([
+        "count", "mean", "median", "std", 
+        lambda x: x.replace([np.inf, -np.inf], np.nan).quantile(0.1),
+        lambda x: x.replace([np.inf, -np.inf], np.nan).quantile(0.9)
+    ]).reset_index()
+    
+    dscr_evolution.columns = ["month", "count", "mean", "median", "std", "p10", "p90"]
+    
+    return {
+        "timepoint_analysis": timepoint_analysis,
+        "risk_assessment": risk_assessment, 
+        "dscr_evolution": dscr_evolution,
+        "dscr_col": dscr_col
+    }
+
+def render_loan_analysis(df: pd.DataFrame, params_state: Dict[str, Any]):
+    """Render comprehensive loan analysis section"""
+    
+    st.header("🏦 Loan Analysis & DSCR Assessment")
+    st.markdown("Professional loan analysis with debt service coverage ratio (DSCR) metrics that SBA lenders expect.")
+    
+    # Calculate loan metrics
+    loan_metrics = calculate_loan_metrics(df, params_state)
+    dscr_metrics = calculate_dscr_metrics(df)
+    
+    # Enhanced Loan Amount Displays
+    with st.expander("💰 Loan Amount Summary", expanded=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("SBA 504 Loan (CapEx)")
+            total_504 = loan_metrics["total_504_amount"]
+            st.metric("Total 504 Loan Amount", f"${total_504:,.0f}")
+            st.metric("Interest-Only Payment", f"${loan_metrics['io_payment_504']:,.0f}/month")
+            st.metric("Amortizing Payment", f"${loan_metrics['amort_payment_504']:,.0f}/month")
+        
+        with col2:
+            st.subheader("SBA 7(a) Loan (OpEx)")
+            total_7a = loan_metrics["total_7a_amount"]
+            st.metric("Total 7(a) Loan Amount", f"${total_7a:,.0f}")
+            st.metric("Interest-Only Payment", f"${loan_metrics['io_payment_7a']:,.0f}/month")
+            st.metric("Amortizing Payment", f"${loan_metrics['amort_payment_7a']:,.0f}/month")
+        
+        # Total debt service
+        st.subheader("Combined Debt Service")
+        total_io = loan_metrics['io_payment_504'] + loan_metrics['io_payment_7a']
+        total_amort = loan_metrics['amort_payment_504'] + loan_metrics['amort_payment_7a']
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Debt", f"${total_504 + total_7a:,.0f}")
+        col2.metric("IO Period Payment", f"${total_io:,.0f}/month")
+        col3.metric("Amortizing Payment", f"${total_amort:,.0f}/month")
+    
+    # Loan Repayment Charts
+    with st.expander("📊 Loan Repayment Visualization", expanded=False):
+        months_range = list(range(1, len(loan_metrics["outstanding_504"]) + 1))
+        
+        # Dual panel chart
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        # Outstanding balances
+        ax1.plot(months_range, loan_metrics["outstanding_504"], label="504 Loan", linewidth=2, color='#1f77b4')
+        ax1.plot(months_range, loan_metrics["outstanding_7a"], label="7(a) Loan", linewidth=2, color='#ff7f0e')
+        ax1.set_title("Outstanding Loan Balances")
+        ax1.set_xlabel("Month")
+        ax1.set_ylabel("Outstanding Balance ($)")
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x/1000:.0f}K'))
+        
+        # Monthly payments
+        ax2.plot(months_range, loan_metrics["monthly_payments_504"], label="504 Payment", linewidth=2, color='#1f77b4')
+        ax2.plot(months_range, loan_metrics["monthly_payments_7a"], label="7(a) Payment", linewidth=2, color='#ff7f0e')
+        total_payments = [p504 + p7a for p504, p7a in zip(loan_metrics["monthly_payments_504"], loan_metrics["monthly_payments_7a"])]
+        ax2.plot(months_range, total_payments, label="Total Payment", linewidth=3, color='#d62728', linestyle='--')
+        ax2.set_title("Monthly Debt Service Payments")
+        ax2.set_xlabel("Month")
+        ax2.set_ylabel("Monthly Payment ($)")
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+        
+        plt.tight_layout()
+        st.pyplot(fig)
+    
+    # DSCR Analysis
+    if "error" not in dscr_metrics:
+        # Multi-Timepoint DSCR Analysis
+        with st.expander("📈 DSCR Analysis by Time Period", expanded=True):
+            timepoint_data = dscr_metrics["timepoint_analysis"]
+            
+            if timepoint_data:
+                # Create metrics display
+                years = [1, 2, 3, 5]
+                available_years = [y for y in years if f"year_{y}" in timepoint_data]
+                
+                cols = st.columns(len(available_years))
+                
+                for i, year in enumerate(available_years):
+                    data = timepoint_data[f"year_{year}"]
+                    
+                    with cols[i]:
+                        st.subheader(f"Year {year}")
+                        
+                        # Color-coded risk indicators
+                        median_dscr = data["median"]
+                        if median_dscr >= 1.25:
+                            color = "green"
+                            risk_level = "Low Risk"
+                        elif median_dscr >= 1.0:
+                            color = "orange" 
+                            risk_level = "Moderate Risk"
+                        else:
+                            color = "red"
+                            risk_level = "High Risk"
+                        
+                        st.metric("Median DSCR", f"{median_dscr:.2f}", help=f"Risk Level: {risk_level}")
+                        st.metric("10th Percentile", f"{data['p10']:.2f}")
+                        st.metric("90th Percentile", f"{data['p90']:.2f}")
+                        st.metric("Below 1.25x", f"{data['below_125']*100:.1f}%")
+                        st.metric("Below 1.0x", f"{data['below_100']*100:.1f}%")
+        
+        # DSCR Evolution Chart
+        with st.expander("📊 DSCR Trend Analysis", expanded=False):
+            dscr_evolution = dscr_metrics["dscr_evolution"]
+            
+            fig, ax = plt.subplots(figsize=(12, 6))
+            
+            # Main trend line
+            ax.plot(dscr_evolution["month"], dscr_evolution["median"], 
+                   linewidth=3, color='#1f77b4', label='Median DSCR')
+            
+            # Confidence bands
+            ax.fill_between(dscr_evolution["month"], 
+                           dscr_evolution["p10"], 
+                           dscr_evolution["p90"],
+                           alpha=0.3, color='#1f77b4', label='10th-90th Percentile')
+            
+            # Reference lines
+            ax.axhline(y=1.25, color='orange', linestyle='--', alpha=0.7, label='1.25x Threshold (Preferred)')
+            ax.axhline(y=1.0, color='red', linestyle='--', alpha=0.7, label='1.0x Threshold (Minimum)')
+            
+            ax.set_title("DSCR Evolution Over Time")
+            ax.set_xlabel("Month")
+            ax.set_ylabel("Debt Service Coverage Ratio")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            ax.set_ylim(0, min(5.0, dscr_evolution["p90"].max() * 1.1))
+            
+            plt.tight_layout()
+            st.pyplot(fig)
+        
+        # DSCR Risk Assessment
+        with st.expander("⚠️ DSCR Risk Assessment", expanded=True):
+            risk_data = dscr_metrics["risk_assessment"]
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.subheader("Overall DSCR Statistics")
+                st.metric("Mean DSCR", f"{risk_data['mean_dscr']:.2f}")
+                st.metric("Median DSCR", f"{risk_data['median_dscr']:.2f}")
+                st.metric("Standard Deviation", f"{risk_data['std_dscr']:.2f}")
+            
+            with col2:
+                st.subheader("Risk Thresholds")
+                below_125 = risk_data['below_125_pct']
+                below_100 = risk_data['below_100_pct']
+                
+                # Color-coded risk metrics
+                if below_125 < 10:
+                    risk_color_125 = "green"
+                elif below_125 < 25:
+                    risk_color_125 = "orange"
+                else:
+                    risk_color_125 = "red"
+                
+                if below_100 < 5:
+                    risk_color_100 = "green"
+                elif below_100 < 15:
+                    risk_color_100 = "orange"
+                else:
+                    risk_color_100 = "red"
+                
+                st.metric("Below 1.25x", f"{below_125:.1f}%", 
+                         delta=f"Risk: {'Low' if below_125 < 10 else 'Moderate' if below_125 < 25 else 'High'}")
+                st.metric("Below 1.0x", f"{below_100:.1f}%",
+                         delta=f"Risk: {'Low' if below_100 < 5 else 'Moderate' if below_100 < 15 else 'High'}")
+            
+            with col3:
+                st.subheader("Range")
+                st.metric("Minimum DSCR", f"{risk_data['min_dscr']:.2f}")
+                st.metric("Maximum DSCR", f"{risk_data['max_dscr']:.2f}")
+        
+        # Enhanced Matrix Heatmaps
+        with st.expander("📊 DSCR Risk Matrix", expanded=False):
+            st.subheader("DSCR Risk Assessment Matrix")
+            
+            # Create DSCR risk matrix by member count and month
+            if "active_members" in df.columns:
+                # Bin members into ranges
+                df_clean = df.copy()
+                df_clean["dscr_clean"] = df_clean[dscr_metrics["dscr_col"]].replace([np.inf, -np.inf], np.nan)
+                df_clean = df_clean.dropna(subset=["dscr_clean"])
+                
+                # Create member bins
+                member_bins = [0, 20, 40, 60, 80, 100, float('inf')]
+                member_labels = ['0-20', '21-40', '41-60', '61-80', '81-100', '100+']
+                df_clean['member_bin'] = pd.cut(df_clean['active_members'], 
+                                              bins=member_bins, labels=member_labels, right=True)
+                
+                # Create time bins (quarters)
+                df_clean['quarter'] = ((df_clean['month'] - 1) // 3) + 1
+                df_clean['year'] = ((df_clean['month'] - 1) // 12) + 1
+                df_clean['time_period'] = df_clean['year'].astype(str) + 'Q' + df_clean['quarter'].astype(str)
+                
+                # Calculate risk metrics for matrix
+                risk_matrix = df_clean.groupby(['member_bin', 'time_period']).agg({
+                    'dscr_clean': ['mean', 'count', lambda x: (x < 1.25).mean() * 100]
+                }).reset_index()
+                
+                risk_matrix.columns = ['member_bin', 'time_period', 'mean_dscr', 'count', 'risk_pct']
+                
+                # Pivot for heatmap
+                if not risk_matrix.empty:
+                    heatmap_data = risk_matrix.pivot(index='member_bin', columns='time_period', values='mean_dscr')
+                    risk_heatmap_data = risk_matrix.pivot(index='member_bin', columns='time_period', values='risk_pct')
+                    
+                    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+                    
+                    # Mean DSCR heatmap
+                    sns.heatmap(heatmap_data, annot=True, fmt='.2f', cmap='RdYlGn', 
+                               center=1.25, ax=ax1, cbar_kws={'label': 'Mean DSCR'})
+                    ax1.set_title('Mean DSCR by Member Count and Time Period')
+                    ax1.set_xlabel('Time Period')
+                    ax1.set_ylabel('Member Count Range')
+                    
+                    # Risk percentage heatmap
+                    sns.heatmap(risk_heatmap_data, annot=True, fmt='.1f', cmap='RdYlBu_r', 
+                               ax=ax2, cbar_kws={'label': '% Below 1.25x DSCR'})
+                    ax2.set_title('DSCR Risk Percentage by Member Count and Time Period')
+                    ax2.set_xlabel('Time Period')
+                    ax2.set_ylabel('Member Count Range')
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                else:
+                    st.info("Insufficient data for matrix analysis")
+            else:
+                st.info("Member count data not available for matrix analysis")
+    
+    else:
+        st.warning(f"DSCR Analysis unavailable: {dscr_metrics['error']}")
+        st.info("DSCR data may not be generated by your current simulation configuration.")
+
 # PARAMETER RENDERING FUNCTIONS
+
 def render_membership_trajectory(params_state: dict) -> dict:
     """Special rendering for membership trajectory options"""
     
@@ -1677,97 +2094,6 @@ def build_complete_overrides(params_state: dict) -> dict:
         "grant_month": grant_month
     }]
     
-    
-    # Station capacities and utilization
-    if all(k in params_state for k in ["WHEELS_CAPACITY", "HANDBUILDING_CAPACITY", "GLAZE_CAPACITY"]):
-        overrides["STATIONS"] = {
-            "wheels": {
-                "capacity": params_state["WHEELS_CAPACITY"],
-                "alpha": params_state.get("WHEELS_ALPHA", 0.80),
-                "kappa": 2  # Default from original code
-            },
-            "handbuilding": {
-                "capacity": params_state["HANDBUILDING_CAPACITY"],
-                "alpha": params_state.get("HANDBUILDING_ALPHA", 0.50),
-                "kappa": 3.0  # Default from original code
-            },
-            "glaze": {
-                "capacity": params_state["GLAZE_CAPACITY"],
-                "alpha": params_state.get("GLAZE_ALPHA", 0.55),
-                "kappa": 2.6  # Default from original code
-            }
-        }
-    
-    # Seasonality array
-    seasonality_keys = [f"SEASONALITY_{month}" for month in ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"]]
-    if all(k in params_state for k in seasonality_keys):
-        overrides["SEASONALITY_WEIGHTS"] = np.array([
-            params_state["SEASONALITY_JAN"], params_state["SEASONALITY_FEB"], params_state["SEASONALITY_MAR"],
-            params_state["SEASONALITY_APR"], params_state["SEASONALITY_MAY"], params_state["SEASONALITY_JUN"],
-            params_state["SEASONALITY_JUL"], params_state["SEASONALITY_AUG"], params_state["SEASONALITY_SEP"],
-            params_state["SEASONALITY_OCT"], params_state["SEASONALITY_NOV"], params_state["SEASONALITY_DEC"]
-        ])
-    
-    # Market pools and inflows
-    if all(k in params_state for k in ["NO_ACCESS_POOL", "HOME_POOL", "COMMUNITY_POOL"]):
-        overrides["MARKET_POOLS"] = {
-            "no_access": params_state["NO_ACCESS_POOL"],
-            "home_studio": params_state["HOME_POOL"],
-            "community_studio": params_state["COMMUNITY_POOL"]
-        }
-    
-    if all(k in params_state for k in ["NO_ACCESS_INFLOW", "HOME_INFLOW", "COMMUNITY_INFLOW"]):
-        overrides["MARKET_POOLS_INFLOW"] = {
-            "no_access": params_state["NO_ACCESS_INFLOW"],
-            "home_studio": params_state["HOME_INFLOW"],
-            "community_studio": params_state["COMMUNITY_INFLOW"]
-        }
-    
-    if all(k in params_state for k in ["BASELINE_RATE_NO_ACCESS", "BASELINE_RATE_HOME", "BASELINE_RATE_COMMUNITY"]):
-        overrides["POOL_BASE_INTENT"] = {
-            "no_access": params_state["BASELINE_RATE_NO_ACCESS"],
-            "home_studio": params_state["BASELINE_RATE_HOME"],  
-            "community_studio": params_state["BASELINE_RATE_COMMUNITY"]
-        }
-    
-    # Handle JSON text parameters (events)
-    if "ATTENDEES_PER_EVENT_RANGE" in params_state:
-        try:
-            overrides["ATTENDEES_PER_EVENT_RANGE"] = json.loads(params_state["ATTENDEES_PER_EVENT_RANGE"])
-        except (json.JSONDecodeError, TypeError):
-            overrides["ATTENDEES_PER_EVENT_RANGE"] = [8, 10, 12]  # Default
-    
-    if "EVENT_MUG_COST_RANGE" in params_state:
-        try:
-            overrides["EVENT_MUG_COST_RANGE"] = tuple(json.loads(params_state["EVENT_MUG_COST_RANGE"]))
-        except (json.JSONDecodeError, TypeError):
-            overrides["EVENT_MUG_COST_RANGE"] = (4.5, 7.5)  # Default
-    
-    # Economic environment parameters that need to be at top level
-    # (these are used directly by the simulator, not within SCENARIO_CONFIGS)
-    economic_params = [
-        "DOWNTURN_PROB_PER_MONTH", "DOWNTURN_JOIN_MULT", "DOWNTURN_CHURN_MULT",
-        "WOM_Q", "WOM_SATURATION", "REFERRAL_RATE_PER_MEMBER", "REFERRAL_CONV",
-        "AWARENESS_RAMP_MONTHS", "AWARENESS_RAMP_START_MULT", "AWARENESS_RAMP_END_MULT",
-        "ADOPTION_SIGMA", "CLASS_TERM_MONTHS", "CS_UNLOCK_FRACTION_PER_TERM",
-        "MAX_ONBOARDINGS_PER_MONTH", "CAPACITY_DAMPING_BETA", "UTILIZATION_CHURN_UPLIFT"
-    ]
-    
-    for param in economic_params:
-        if param in params_state:
-            overrides[param] = params_state[param]
-    
-    # Scenario config wrapper (required by simulator)
-    grant_amount = params_state.get("grant_amount", 0.0)
-    grant_month = params_state.get("grant_month", -1)
-    grant_month = None if grant_month == -1 else grant_month
-    
-    overrides["SCENARIO_CONFIGS"] = [{
-        "name": "User_Defined",
-        "grant_amount": grant_amount,
-        "grant_month": grant_month
-    }]
-    
     return overrides
 
 # UI MAIN INTERFACE
@@ -1811,7 +2137,6 @@ def render_complete_ui():
         for param_name, spec in COMPLETE_PARAM_SPECS.items():
             st.session_state.params_state[param_name] = spec.get("default", get_param_default(spec))
         st.experimental_rerun()
- 
 
     # Main parameter interface
     st.header("Parameter Configuration")
@@ -1926,7 +2251,7 @@ def render_complete_ui():
             cleaned.append({"up_to_lbs": None, "rate": cleaned[-1]["rate"]})
         st.session_state.params_state["FIRING_FEE_SCHEDULE"] = cleaned
 
-# --- Run form at bottom ---
+    # Run form at bottom
     with st.form("run_form"):
         st.subheader("Run simulation")
         c1, c2, c3 = st.columns(3)
@@ -2103,6 +2428,9 @@ def render_complete_ui():
                 st.metric("50th Percentile Breakeven", f"{be_months.quantile(0.5):.0f} months" if len(be_months) > 0 else "Never")
                 st.metric("90th Percentile Breakeven", f"{be_months.quantile(0.9):.0f} months" if len(be_months) > 0 else "Never")
         
+        # Enhanced Loan Analysis Section
+        render_loan_analysis(df, st.session_state.params_state)
+        
         # Raw data download and display
         st.subheader("Raw Simulation Data")
         
@@ -2135,12 +2463,6 @@ def render_complete_ui():
             st.caption(f"Showing first 200 of {len(df)} total rows. Download CSV for complete data.")
 
 # HELPER FUNCTIONS FROM ORIGINAL CODE
-def pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
-    """Find first available column from candidates list"""
-    for c in candidates:
-        if c in df.columns:
-            return c
-    return None
 
 def _normalize_capex_items(df):
     """Convert equipment dataframe to list of dicts for simulator"""
