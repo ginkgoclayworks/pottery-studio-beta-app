@@ -2193,10 +2193,10 @@ def build_complete_overrides(params_state: dict) -> dict:
     for param in economic_params:
         if param in params_state:
             overrides[param] = params_state[param]
-    # --- BUGFIX: Wire loan knobs from UI -> simulator ---
-    # The simulator expects these globals; previously they were not forwarded,
-    # causing DSCR to be computed with simulator defaults instead of UI values.
-    loan_param_map = [
+
+    # ---------- Loan wiring: UI -> simulator globals ----------
+    # Forward core 7(a)/504 knobs so simulator doesn't use defaults
+    _loan_keys = [
         "RUNWAY_MONTHS",
         "LOAN_504_ANNUAL_RATE", "LOAN_504_TERM_YEARS", "IO_MONTHS_504",
         "LOAN_7A_ANNUAL_RATE",  "LOAN_7A_TERM_YEARS",  "IO_MONTHS_7A",
@@ -2204,18 +2204,27 @@ def build_complete_overrides(params_state: dict) -> dict:
         "FEES_UPFRONT_PCT_7A", "FEES_UPFRONT_PCT_504",
         "FEES_PACKAGING", "FEES_CLOSING",
         "FINANCE_FEES_7A", "FINANCE_FEES_504",
+        "RESERVE_FLOOR",
     ]
-    for k in loan_param_map:
+    for k in _loan_keys:
         if k in params_state:
             overrides[k] = params_state[k]
 
-    # Map UI override fields to simulator globals
-    ov504 = params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0) or 0
-    ov7a  = params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0) or 0
-    if float(ov504) > 0:
-        overrides["LOAN_OVERRIDE_504"] = float(ov504)
-    if float(ov7a) > 0:
-        overrides["LOAN_OVERRIDE_7A"] = float(ov7a)
+    # Map UI principal overrides to simulator names
+    # UI: LOAN_504_AMOUNT_OVERRIDE / LOAN_7A_AMOUNT_OVERRIDE
+    # SIM: LOAN_OVERRIDE_504 / LOAN_OVERRIDE_7A
+    try:
+        ov504 = float(params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0) or 0)
+        if ov504 > 0:
+            overrides["LOAN_OVERRIDE_504"] = ov504
+    except Exception:
+        pass
+    try:
+        ov7a = float(params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0) or 0)
+        if ov7a > 0:
+            overrides["LOAN_OVERRIDE_7A"] = ov7a
+    except Exception:
+        pass
 
     
     # Scenario config wrapper (required by simulator)
