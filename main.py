@@ -1922,7 +1922,16 @@ def generate_membership_curve_from_segments(segments: list, total_months: int) -
 def render_parameter_group(group_name: str, group_info: dict, params_state: dict) -> dict:
     """Render a logical group of parameters - all parameters shown directly without nested sections"""
     
-    # ... existing code ...
+    # Get parameters for this group
+    group_params = {k: v for k, v in COMPLETE_PARAM_SPECS.items() if v.get("group") == group_name}
+    
+    if not group_params:
+        return params_state
+    
+    # Group header
+    color_indicator = {"green": "🟢", "amber": "🟡", "red": "🔴", "blue": "🔵"}.get(group_info["color"], "⚪")
+    st.markdown(f"**{group_info['title']}**")
+    st.caption(f"{color_indicator} {group_info['desc']}")
     
     # Show all parameters for this group directly (no nested advanced sections)
     for param_name in sorted(group_params.keys()):
@@ -1977,11 +1986,6 @@ def render_single_parameter(param_name: str, spec: dict, current_value: Any, par
                 suggested = int(round(monthly_base_opex * runway_months + extra_buffer))
             
             # CRITICAL FIX: Don't auto-set the override! Only show suggestion in help text
-            # Remove these lines that were auto-setting values:
-            # if current_value is None or (isinstance(current_value, (int, float)) and float(current_value) == 0.0):
-            #     current_value = suggested
-            
-            # Instead, just add suggestion to description
             desc = f"{desc} Suggested: ${suggested:,.0f} based on current CapEx/OpEx."
         except Exception:
             pass
