@@ -10,16 +10,13 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib
+matplotlib.use('Agg')  # Set backend before importing pyplot to fix rendering issues
 import matplotlib.pyplot as plt
 import seaborn as sns
 from modular_simulator import get_default_cfg
 from final_batch_adapter import run_original_once
 from sba_export import export_to_sba_workbook
 import os
-import matplotlib
-matplotlib.use('Agg')  # Set backend before importing pyplot
-import matplotlib.pyplot as plt
-
 
 def pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     """Find first available column from candidates list"""
@@ -1597,49 +1594,78 @@ def render_loan_analysis(df: pd.DataFrame, params_state: Dict[str, Any]):
                 df_clean["dscr_clean"] = df_clean[dscr_metrics["dscr_col"]].replace([np.inf, -np.inf], np.nan)
                 df_clean = df_clean.dropna(subset=["dscr_clean"])
                 
-                # Create member bins
-                member_bins = [0, 20, 40, 60, 80, 100, float('inf')]
-                member_labels = ['0-20', '21-40', '41-60', '61-80', '81-100', '100+']
-                df_clean['member_bin'] = pd.cut(df_clean['active_members'], 
-                                              bins=member_bins, labels=member_labels, right=True)
-                
-                # Create time bins (quarters)
-                df_clean['quarter'] = ((df_clean['month'] - 1) // 3) + 1
-                df_clean['year'] = ((df_clean['month'] - 1) // 12) + 1
-                df_clean['time_period'] = df_clean['year'].astype(str) + 'Q' + df_clean['quarter'].astype(str)
-                
-                # Calculate risk metrics for matrix
-                risk_matrix = df_clean.groupby(['member_bin', 'time_period']).agg({
-                    'dscr_clean': ['mean', 'count', lambda x: (x < 1.25).mean() * 100]
-                }).reset_index()
-                
-                risk_matrix.columns = ['member_bin', 'time_period', 'mean_dscr', 'count', 'risk_pct']
-                
-                # Pivot for heatmap
-                if not risk_matrix.empty:
-                    heatmap_data = risk_matrix.pivot(index='member_bin', columns='time_period', values='mean_dscr')
-                    risk_heatmap_data = risk_matrix.pivot(index='member_bin', columns='time_period', values='risk_pct')
+                if len(df_clean) > 0:
+                    # Create member bins based on actual data distribution
+                    max_members = df_clean['active_members'].max()
+                    if max_members <= 50:
+                        member_bins = [0, 15, 30, 45, float('inf')]
+                        member_labels = ['0-15', '16-30', '31-45', '46+']
+                    else:
+                        member_bins = [0, 25, 50, 75, float('inf')]
+                        member_labels = ['0-25', '26-50', '51-75', '76+']
                     
-                    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+                    df_clean['member_bin'] = pd.cut(df_clean['active_members'], 
+                                                  bins=member_bins, labels=member_labels, right=True)
                     
-                    # Mean DSCR heatmap
-                    sns.heatmap(heatmap_data, annot=True, fmt='.2f', cmap='RdYlGn', 
-                               center=1.25, ax=ax1, cbar_kws={'label': 'Mean DSCR'})
-                    ax1.set_title('Mean DSCR by Member Count and Time Period')
-                    ax1.set_xlabel('Time Period')
-                    ax1.set_ylabel('Member Count Range')
+                    # Create time bins (years only for cleaner display)
+                    df_clean['year'] = ((df_clean['month'] - 1) // 12) + 1
+                    df_clean = df_clean[df_clean['year'] <= 5]  # Limit to first 5 years
+                    df_clean['time_period'] = 'Year ' + df_clean['year'].astype(str)
                     
-                    # Risk percentage heatmap
-                    sns.heatmap(risk_heatmap_data, annot=True, fmt='.1f', cmap='RdYlBu_r', 
-                               ax=ax2, cbar_kws={'label': '% Below 1.25x DSCR'})
-                    ax2.set_title('DSCR Risk Percentage by Member Count and Time Period')
-                    ax2.set_xlabel('Time Period')
-                    ax2.set_ylabel('Member Count Range')
+                    # Calculate risk metrics for matrix
+                    risk_matrix = df_clean.groupby(['member_bin', 'time_period']).agg({
+                        'dscr_clean': ['mean', 'count', lambda x: (x < 1.25).mean() * 100]
+                    }).reset_index()
                     
-                    plt.tight_layout()
-                    st.pyplot(fig)
+                    risk_matrix.columns = ['member_bin', 'time_period', 'mean_dscr', 'count', 'risk_pct']
+                    
+                    # Only show matrix if we have sufficient data
+                    if len(risk_matrix) > 0 and risk_matrix['count'].sum() >= 20:
+                        # Pivot for heatmap
+                        heatmap_data = risk_matrix.pivot(index='member_bin', columns='time_period', values='mean_dscr')
+                        risk_heatmap_data = risk_matrix.pivot(index='member_bin', columns='time_period', values='risk_pct')
+                        
+                        # Create cleaner, larger heatmaps
+                        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+                        
+                        # Mean DSCR heatmap
+                        if not heatmap_data.empty:
+                            sns.heatmap(heatmap_data, annot=True, fmt='.2f', cmap='RdYlGn', 
+                                       center=1.25, ax=ax1, cbar_kws={'label': 'Mean DSCR'},
+                                       square=False, linewidths=0.5)
+                            ax1.set_title('Mean DSCR by Member Count and Time Period', fontsize=14, pad=20)
+                            ax1.set_xlabel('Time Period', fontsize=12)
+                            ax1.set_ylabel('Member Count Range', fontsize=12)
+                            ax1.tick_params(axis='x', rotation=0)
+                            ax1.tick_params(axis='y', rotation=0)
+                        
+                        # Risk percentage heatmap
+                        if not risk_heatmap_data.empty:
+                            sns.heatmap(risk_heatmap_data, annot=True, fmt='.1f', cmap='RdYlBu_r', 
+                                       ax=ax2, cbar_kws={'label': '% Below 1.25x DSCR'},
+                                       square=False, linewidths=0.5)
+                            ax2.set_title('DSCR Risk Percentage by Member Count and Time Period', fontsize=14, pad=20)
+                            ax2.set_xlabel('Time Period', fontsize=12)
+                            ax2.set_ylabel('Member Count Range', fontsize=12)
+                            ax2.tick_params(axis='x', rotation=0)
+                            ax2.tick_params(axis='y', rotation=0)
+                        
+                        plt.tight_layout()
+                        st.pyplot(fig)
+                        
+                        # Add interpretation guide
+                        st.markdown("**Matrix Interpretation:**")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("- **Green areas**: Strong DSCR (>1.25x), low risk")
+                            st.markdown("- **Yellow areas**: Moderate DSCR (1.0-1.25x), moderate risk")
+                        with col2:
+                            st.markdown("- **Red areas**: Weak DSCR (<1.0x), high risk")
+                            st.markdown("- **Blue areas**: Low risk percentage (<20%)")
+                    else:
+                        st.info("Insufficient data points for reliable matrix analysis. Need more simulation results or longer time horizon.")
                 else:
-                    st.info("Insufficient data for matrix analysis")
+                    st.info("No valid DSCR data available for matrix analysis")
             else:
                 st.info("Member count data not available for matrix analysis")
     
@@ -2433,7 +2459,22 @@ def render_complete_ui():
                 st.metric("90th Percentile Breakeven", f"{be_months.quantile(0.9):.0f} months" if len(be_months) > 0 else "Never")
         
         # Enhanced Loan Analysis Section
-        render_loan_analysis(df, st.session_state.params_state)
+        try:
+            render_loan_analysis(df, st.session_state.params_state)
+        except Exception as e:
+            st.warning(f"Loan analysis charts could not be generated: {e}")
+            st.info("Basic simulation results are still available, but loan analysis charts may not display properly.")
+            # Still show basic loan metrics without charts
+            st.subheader("Basic Loan Information")
+            try:
+                loan_metrics = calculate_loan_metrics(df, st.session_state.params_state)
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Estimated SBA 504 Loan", f"${loan_metrics['total_504_amount']:,.0f}")
+                with col2:
+                    st.metric("Estimated SBA 7(a) Loan", f"${loan_metrics['total_7a_amount']:,.0f}")
+            except:
+                pass
         
         # Raw data download and display
         st.subheader("Raw Simulation Data")
@@ -2505,7 +2546,7 @@ def _normalize_capex_items(df):
 
 # Keep existing simulation execution and plotting functions
 class FigureCapture:
-    """Context manager for capturing matplotlib figures"""
+    """Context manager for capturing matplotlib figures with error handling"""
     def __init__(self, title_suffix: str = ""):
         self.title_suffix = title_suffix
         self._orig_show = None
@@ -2517,7 +2558,7 @@ class FigureCapture:
             matplotlib.use("Agg", force=True)
         except:
             pass  # Backend might already be set
-        
+            
         self._orig_show = plt.show
         counter = {"i": 0}
 
