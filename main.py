@@ -954,6 +954,19 @@ COMPLETE_PARAM_SPECS = {
     # =============================================================================
     # FINANCING: SBA LOANS
     # =============================================================================
+    # SBA Loan Amounts (Auto-calculated from CapEx and OpEx)
+    "LOAN_504_AMOUNT_OVERRIDE": {
+        "type": "float", "min": 0.0, "max": 500000.0, "step": 1000.0, "default": 0.0,
+        "label": "SBA 504 Loan Amount Override ($, 0=Auto-calculate)",
+        "desc": "Manual override for SBA 504 loan amount. Leave at 0 to auto-calculate from CapEx equipment costs plus contingency.",
+        "group": "financing"
+    },
+    "LOAN_7A_AMOUNT_OVERRIDE": {
+        "type": "float", "min": 0.0, "max": 500000.0, "step": 1000.0, "default": 0.0,
+        "label": "SBA 7(a) Loan Amount Override ($, 0=Auto-calculate)", 
+        "desc": "Manual override for SBA 7(a) loan amount. Leave at 0 to auto-calculate from 8 months of OpEx (rent + owner draw + insurance).",
+        "group": "financing"
+    },
     "LOAN_504_ANNUAL_RATE": {
         "type": "float", "min": 0.03, "max": 0.15, "step": 0.001, "default": 0.070,
         "label": "SBA 504 Annual Rate",
@@ -1247,21 +1260,32 @@ def calculate_loan_metrics(df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str
     io_months_504 = params.get("IO_MONTHS_504", 6)
     io_months_7a = params.get("IO_MONTHS_7A", 6)
     
-    # Estimate loan amounts from equipment and working capital needs
-    capex_items = params.get("CAPEX_ITEMS", [])
-    total_504_amount = sum(item.get("unit_cost", 0) * item.get("count", 1) 
-                          for item in capex_items 
-                          if item.get("enabled", True) and item.get("finance_504", True))
+    # Calculate 504 amount from CapEx items (use user override if provided)
+    if "LOAN_504_AMOUNT_OVERRIDE" in params and params["LOAN_504_AMOUNT_OVERRIDE"] > 0:
+        total_504_amount = params["LOAN_504_AMOUNT_OVERRIDE"]
+    else:
+        capex_items = params.get("CAPEX_ITEMS", [])
+        total_504_amount = sum(item.get("unit_cost", 0) * item.get("count", 1) 
+                              for item in capex_items 
+                              if item.get("enabled", True) and item.get("finance_504", True))
+        # Apply contingency
+        contingency = params.get("LOAN_CONTINGENCY_PCT", 0.08)
+        total_504_amount *= (1 + contingency)
     
-    # Apply contingency
-    contingency = params.get("LOAN_CONTINGENCY_PCT", 0.08)
-    total_504_amount *= (1 + contingency)
-    
-    # Estimate 7(a) amount from operating runway
-    runway_months = params.get("RUNWAY_MONTHS", 12)
-    monthly_opex = params.get("RENT", 3500) + params.get("INSURANCE_COST", 75) + params.get("GLAZE_COST_PER_MONTH", 833)
-    extra_buffer = params.get("EXTRA_BUFFER", 10000)
-    total_7a_amount = (monthly_opex * runway_months) + extra_buffer
+    # Calculate 7(a) amount from OpEx (use user override if provided)
+    if "LOAN_7A_AMOUNT_OVERRIDE" in params and params["LOAN_7A_AMOUNT_OVERRIDE"] > 0:
+        total_7a_amount = params["LOAN_7A_AMOUNT_OVERRIDE"]
+    else:
+        # Base OpEx calculation: rent + owner draw + basic fixed costs
+        monthly_rent = params.get("RENT", 3500)
+        monthly_owner_draw = params.get("OWNER_DRAW", 2000)
+        monthly_insurance = params.get("INSURANCE_COST", 75)
+        monthly_base_opex = monthly_rent + monthly_owner_draw + monthly_insurance
+        
+        # Use 8 months as default runway for 7(a) sizing
+        runway_months = 8
+        extra_buffer = params.get("EXTRA_BUFFER", 10000)
+        total_7a_amount = (monthly_base_opex * runway_months) + extra_buffer
     
     # Calculate monthly payments
     def calculate_monthly_payment(principal, annual_rate, term_years, io_months=0):
@@ -2190,6 +2214,49 @@ def render_complete_ui():
     
     # Equipment configuration (special handling)
     with st.expander("🔧 Equipment & Capital Expenditures", expanded=False):
+        st.markdown("**Staff hiring schedule**")
+        st.caption("Define when staff are hired, their compensation, and duration of employment.")
+        
+        # Default staff configuration
+        default_staff = [
+            {"enabled": False, "role": "Part-time Assistant", "start_month": 6, "end_month": None, "hourly_rate": 18.0, "hours_per_week": 20, "trigger_members": None},
+            {"enabled": False, "role": "Studio Manager", "start_month": 12, "end_month": None, "hourly_rate": 25.0, "hours_per_week": 30, "trigger_members": None},
+            {"enabled": False, "role": "Evening Instructor", "start_month": None, "end_month": None, "hourly_rate": 30.0, "hours_per_week": 15, "trigger_members": 50},
+        ]
+        
+        if "STAFF_SCHEDULE" not in st.session_state.params_state:
+            st.session_state.params_state["STAFF_SCHEDULE"] = default_staff
+        
+        staff_df = pd.DataFrame(st.session_state.params_state["STAFF_SCHEDULE"])
+        
+        edited_staff = st.data_editor(
+            staff_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "enabled": st.column_config.CheckboxColumn("Include", help="Whether this staff position is filled"),
+                "role": st.column_config.TextColumn("Role/Title", help="Staff position description"),
+                "start_month": st.column_config.NumberColumn("Start Month", min_value=0, step=1, help="Month to hire (0=immediate, leave blank for member-triggered)"),
+                "end_month": st.column_config.NumberColumn("End Month", min_value=1, step=1, help="Last month of employment (blank=permanent through forecast)"),
+                "hourly_rate": st.column_config.NumberColumn("Hourly Rate ($)", min_value=10.0, step=0.50, help="Hourly compensation including taxes/benefits"),
+                "hours_per_week": st.column_config.NumberColumn("Hours/Week", min_value=1.0, step=1.0, help="Average hours worked per week"),
+                "trigger_members": st.column_config.NumberColumn("Member Trigger", min_value=0, step=1, help="Member count to trigger hiring (blank for month-based)")
+            }
+        )
+        
+        st.session_state.params_state["STAFF_SCHEDULE"] = edited_staff.to_dict("records")
+        
+        # Show calculated monthly costs
+        if len(edited_staff) > 0:
+            enabled_staff = edited_staff[edited_staff.get("enabled", False) == True]
+            if len(enabled_staff) > 0:
+                total_monthly_cost = sum(
+                    (row.get("hourly_rate", 0) * row.get("hours_per_week", 0) * 52 / 12)
+                    for _, row in enabled_staff.iterrows()
+                )
+                st.info(f"Total monthly staff cost when all enabled positions are active: ${total_monthly_cost:,.0f}")
+    
+    with st.expander("🔧 Equipment & Capital Expenditures", expanded=False):
         st.markdown("**Equipment purchase schedule**")
         st.caption("Define when equipment is purchased (by month or member count) and whether it's financed through SBA 504 loans.")
         
@@ -2407,6 +2474,49 @@ def render_complete_ui():
                     file_name=f"gcws_charts_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.zip",
                     mime="application/zip"
                 )
+        
+        # Enhanced Loan Amount Displays
+        with st.expander("💰 Loan Amount Summary", expanded=True):
+            col1, col2 = st.columns(2)
+            
+            # Calculate auto amounts for display
+            capex_items = st.session_state.params_state.get("CAPEX_ITEMS", [])
+            auto_504_amount = sum(item.get("unit_cost", 0) * item.get("count", 1) 
+                                 for item in capex_items 
+                                 if item.get("enabled", True) and item.get("finance_504", True))
+            contingency = st.session_state.params_state.get("LOAN_CONTINGENCY_PCT", 0.08)
+            auto_504_amount *= (1 + contingency)
+            
+            monthly_rent = st.session_state.params_state.get("RENT", 3500)
+            monthly_owner_draw = st.session_state.params_state.get("OWNER_DRAW", 2000) 
+            monthly_insurance = st.session_state.params_state.get("INSURANCE_COST", 75)
+            monthly_base_opex = monthly_rent + monthly_owner_draw + monthly_insurance
+            auto_7a_amount = (monthly_base_opex * 8) + st.session_state.params_state.get("EXTRA_BUFFER", 10000)
+            
+            with col1:
+                st.subheader("SBA 504 Loan (CapEx)")
+                override_504 = st.session_state.params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0)
+                used_504_amount = override_504 if override_504 > 0 else auto_504_amount
+                
+                st.metric("Auto-calculated from CapEx", f"${auto_504_amount:,.0f}")
+                if override_504 > 0:
+                    delta_504 = override_504 - auto_504_amount
+                    st.metric("User Override Amount", f"${override_504:,.0f}", 
+                             delta=f"${delta_504:+,.0f} vs auto")
+                st.metric("Will be used in simulation", f"${used_504_amount:,.0f}")
+            
+            with col2:
+                st.subheader("SBA 7(a) Loan (OpEx)")
+                override_7a = st.session_state.params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0)
+                used_7a_amount = override_7a if override_7a > 0 else auto_7a_amount
+                
+                st.metric("Auto-calculated from OpEx", f"${auto_7a_amount:,.0f}")
+                st.caption(f"Based on: ${monthly_base_opex:,.0f}/month × 8 months + ${st.session_state.params_state.get('EXTRA_BUFFER', 10000):,.0f} buffer")
+                if override_7a > 0:
+                    delta_7a = override_7a - auto_7a_amount
+                    st.metric("User Override Amount", f"${override_7a:,.0f}",
+                             delta=f"${delta_7a:+,.0f} vs auto")
+                st.metric("Will be used in simulation", f"${used_7a_amount:,.0f}")
         
         # Summary statistics table
         st.header("📈 Detailed Results")
