@@ -1259,66 +1259,80 @@ PARAMETER_GROUPS = {
     }
 }
 
-def calculate_loan_metrics(df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str, Any]:
+def calculate_loan_metrics(df: pd.DataFrame, params_state: Dict[str, Any]) -> Dict[str, Any]:
     """Calculate comprehensive loan analysis metrics from simulation results"""
     
     # Extract loan parameters
-    loan_504_rate = params.get("LOAN_504_ANNUAL_RATE", 0.070)
-    loan_7a_rate = params.get("LOAN_7A_ANNUAL_RATE", 0.115)
-    loan_504_term = params.get("LOAN_504_TERM_YEARS", 20)
-    loan_7a_term = params.get("LOAN_7A_TERM_YEARS", 7)
-    io_months_504 = params.get("IO_MONTHS_504", 6)
-    io_months_7a = params.get("IO_MONTHS_7A", 6)
+    loan_504_rate = params_state.get("LOAN_504_ANNUAL_RATE", 0.070)
+    loan_7a_rate = params_state.get("LOAN_7A_ANNUAL_RATE", 0.115)
+    loan_504_term = params_state.get("LOAN_504_TERM_YEARS", 20)
+    loan_7a_term = params_state.get("LOAN_7A_TERM_YEARS", 7)
+    io_months_504 = params_state.get("IO_MONTHS_504", 6)
+    io_months_7a = params_state.get("IO_MONTHS_7A", 6)
     
     # Calculate 504 amount from CapEx items (use user override if provided)
-    if "LOAN_504_AMOUNT_OVERRIDE" in params and params["LOAN_504_AMOUNT_OVERRIDE"] > 0:
-        total_504_amount = params["LOAN_504_AMOUNT_OVERRIDE"]
+    if "LOAN_504_AMOUNT_OVERRIDE" in params_state and params_state["LOAN_504_AMOUNT_OVERRIDE"] > 0:
+        total_504_amount = params_state["LOAN_504_AMOUNT_OVERRIDE"]
     else:
-        # Robustly coerce & filter CAPEX rows before summing
-        raw_items = params.get("CAPEX_ITEMS", []) or []
-        try:
-            capex_df = pd.DataFrame(raw_items)
-        except Exception:
-            capex_df = pd.DataFrame([])
-
-        if not capex_df.empty:
-            # Ensure required columns exist
-            for col in ("enabled", "finance_504", "unit_cost", "count"):
-                if col not in capex_df.columns:
-                    capex_df[col] = [True] * len(capex_df) if col in ("enabled", "finance_504") else 0
-
-            # Type coercion (prevents "string x int" oddities)
-            capex_df["unit_cost"] = pd.to_numeric(capex_df["unit_cost"], errors="coerce").fillna(0.0)
-            capex_df["count"]     = pd.to_numeric(capex_df["count"],     errors="coerce").fillna(1).astype(int)
-            capex_df["enabled"]   = capex_df["enabled"].fillna(True).astype(bool)
-            capex_df["finance_504"] = capex_df["finance_504"].fillna(True).astype(bool)
-
-            sel = capex_df["enabled"] & capex_df["finance_504"]
-            total_504_amount = float((capex_df.loc[sel, "unit_cost"] * capex_df.loc[sel, "count"]).sum())
+        # FIXED: Process equipment data consistently
+        capex_items = params_state.get("CAPEX_ITEMS", []) or []
+        
+        # Convert to DataFrame and ensure proper structure
+        if capex_items and isinstance(capex_items[0], dict):
+            try:
+                capex_df = pd.DataFrame(capex_items)
+                
+                # Ensure required columns exist with proper defaults
+                required_cols = {
+                    'enabled': True,
+                    'finance_504': True, 
+                    'unit_cost': 0.0,
+                    'count': 1
+                }
+                
+                for col, default_val in required_cols.items():
+                    if col not in capex_df.columns:
+                        capex_df[col] = default_val
+                
+                # Type coercion to prevent calculation errors
+                capex_df["unit_cost"] = pd.to_numeric(capex_df["unit_cost"], errors="coerce").fillna(0.0)
+                capex_df["count"] = pd.to_numeric(capex_df["count"], errors="coerce").fillna(1).astype(int)
+                capex_df["enabled"] = capex_df["enabled"].fillna(True).astype(bool)
+                capex_df["finance_504"] = capex_df["finance_504"].fillna(True).astype(bool)
+                
+                # Calculate 504-eligible equipment total
+                enabled_504_items = capex_df[capex_df["enabled"] & capex_df["finance_504"]]
+                total_504_amount = float((enabled_504_items["unit_cost"] * enabled_504_items["count"]).sum())
+                
+            except Exception as e:
+                print(f"Error processing CAPEX_ITEMS: {e}")
+                total_504_amount = 0.0
         else:
             total_504_amount = 0.0
 
         # Apply contingency & explicit buffer
-        contingency = float(params.get("LOAN_CONTINGENCY_PCT", 0.08) or 0.0)
+        contingency = float(params_state.get("LOAN_CONTINGENCY_PCT", 0.08) or 0.0)
         total_504_amount *= (1.0 + contingency)
-        total_504_amount += float(params.get("EXTRA_504_BUFFER", 0.0) or 0.0)
+        total_504_amount += float(params_state.get("EXTRA_504_BUFFER", 0.0) or 0.0)
     
     # Calculate 7(a) amount from OpEx (use user override if provided)
-    if "LOAN_7A_AMOUNT_OVERRIDE" in params and params["LOAN_7A_AMOUNT_OVERRIDE"] > 0:
-        total_7a_amount = params["LOAN_7A_AMOUNT_OVERRIDE"]
+    if "LOAN_7A_AMOUNT_OVERRIDE" in params_state and params_state["LOAN_7A_AMOUNT_OVERRIDE"] > 0:
+        total_7a_amount = params_state["LOAN_7A_AMOUNT_OVERRIDE"]
     else:
         # Base OpEx calculation: rent + owner draw + basic fixed costs
-        monthly_rent = params.get("RENT", 3500)
-        monthly_owner_draw = params.get("OWNER_DRAW", 2000)
-        monthly_insurance = params.get("INSURANCE_COST", 75)
+        monthly_rent = params_state.get("RENT", 3500)
+        monthly_owner_draw = params_state.get("OWNER_DRAW", 2000)
+        monthly_insurance = params_state.get("INSURANCE_COST", 75)
         monthly_base_opex = monthly_rent + monthly_owner_draw + monthly_insurance
         
-        # Use RUNWAY_MONTHS when provided for 7(a) sizing
-        runway_months = int(params.get("RUNWAY_MONTHS", 8) or 8)
-        extra_buffer = params.get("EXTRA_BUFFER", 10000)
+        # Use RUNWAY_MONTHS for 7(a) sizing
+        runway_months = int(params_state.get("RUNWAY_MONTHS", 8) or 8)
+        extra_buffer = params_state.get("EXTRA_BUFFER", 10000)
         total_7a_amount = (monthly_base_opex * runway_months) + extra_buffer
     
-    # Calculate monthly payments
+    # Rest of the function remains the same...
+    # [Previous calculate_monthly_payment function and payment calculations]
+    
     def calculate_monthly_payment(principal, annual_rate, term_years, io_months=0):
         """Calculate monthly payment for loan with optional interest-only period"""
         monthly_rate = annual_rate / 12
@@ -1937,20 +1951,26 @@ def render_single_parameter(param_name: str, spec: dict, current_value: Any, par
     if current_value is None:
         current_value = spec.get("default", get_param_default(spec))
     
-        # Suggestion logic for loan amount overrides
+    # FIXED: Improved suggestion logic for loan amount overrides
     if param_name in ("LOAN_504_AMOUNT_OVERRIDE", "LOAN_7A_AMOUNT_OVERRIDE"):
         try:
             if param_name == "LOAN_504_AMOUNT_OVERRIDE":
+                # Process current equipment items to calculate suggested 504 amount
                 capex_items = params_state.get("CAPEX_ITEMS", []) or []
-                base_504 = sum(
-                    float(item.get("unit_cost", 0)) * float(item.get("count", 1))
-                    for item in capex_items
-                    if (item.get("enabled", True) and item.get("finance_504", True))
-                )
+                base_504 = 0.0
+                
+                if capex_items:
+                    for item in capex_items:
+                        if (item.get("enabled", True) and item.get("finance_504", True)):
+                            unit_cost = float(item.get("unit_cost", 0) or 0)
+                            count = float(item.get("count", 1) or 1)
+                            base_504 += unit_cost * count
+                
                 contingency = float(params_state.get("LOAN_CONTINGENCY_PCT", 0.08) or 0.0)
                 extra_504 = float(params_state.get("EXTRA_504_BUFFER", 0.0) or 0.0)
                 suggested = int(round(base_504 * (1.0 + contingency) + extra_504))
-            else:
+                
+            else:  # LOAN_7A_AMOUNT_OVERRIDE
                 monthly_rent = float(params_state.get("RENT", 3500) or 0.0)
                 monthly_owner_draw = float(params_state.get("OWNER_DRAW", 2000) or 0.0)
                 monthly_insurance = float(params_state.get("INSURANCE_COST", 75) or 0.0)
@@ -1958,20 +1978,22 @@ def render_single_parameter(param_name: str, spec: dict, current_value: Any, par
                 runway_months = int(params_state.get("RUNWAY_MONTHS", 8) or 8)
                 extra_buffer = float(params_state.get("EXTRA_BUFFER", 10000) or 0.0)
                 suggested = int(round(monthly_base_opex * runway_months + extra_buffer))
+            
             # Only prefill when value is unset or explicitly zero
             if current_value is None or (isinstance(current_value, (int, float)) and float(current_value) == 0.0):
                 current_value = suggested
             # Append suggestion to the tooltip
             desc = f"{desc} Suggested: ${suggested:,.0f} based on current CapEx/OpEx."
-        except Exception:
+        except Exception as e:
+            print(f"Error calculating loan suggestion: {e}")
             pass
-
+    
     # Create help text
     help_text = f"{desc}"
     if "min" in spec and "max" in spec:
         help_text += f" Range: {spec['min']}-{spec['max']}"
     
-    # Render appropriate widget
+    # Rest of the widget rendering remains the same...
     if param_type == "bool":
         return st.checkbox(label, value=current_value, help=help_text)
     
