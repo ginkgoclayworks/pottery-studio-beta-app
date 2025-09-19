@@ -16,6 +16,10 @@ from modular_simulator import get_default_cfg
 from final_batch_adapter import run_original_once
 from sba_export import export_to_sba_workbook
 import os
+import matplotlib
+matplotlib.use('Agg')  # Set backend before importing pyplot
+import matplotlib.pyplot as plt
+
 
 def pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     """Find first available column from candidates list"""
@@ -2501,7 +2505,7 @@ def _normalize_capex_items(df):
 
 # Keep existing simulation execution and plotting functions
 class FigureCapture:
-    """Context manager for capturing matplotlib figures (from original code)"""
+    """Context manager for capturing matplotlib figures"""
     def __init__(self, title_suffix: str = ""):
         self.title_suffix = title_suffix
         self._orig_show = None
@@ -2509,21 +2513,28 @@ class FigureCapture:
         self.manifest = []
 
     def __enter__(self):
-        matplotlib.use("Agg", force=True)
+        try:
+            matplotlib.use("Agg", force=True)
+        except:
+            pass  # Backend might already be set
+        
         self._orig_show = plt.show
         counter = {"i": 0}
 
         def _show(*args, **kwargs):
-            counter["i"] += 1
-            fig = plt.gcf()
-            
-            buf = io.BytesIO()
-            fig.savefig(buf, dpi=200, bbox_inches="tight", format="png")
-            buf.seek(0)
-            fname = f"fig_{counter['i']:02d}.png"
-            self.images.append((fname, buf.read()))
-            self.manifest.append({"file": fname, "title": f"Figure {counter['i']}"})
-            plt.close(fig)
+            try:
+                counter["i"] += 1
+                fig = plt.gcf()
+                
+                buf = io.BytesIO()
+                fig.savefig(buf, dpi=200, bbox_inches="tight", format="png")
+                buf.seek(0)
+                fname = f"fig_{counter['i']:02d}.png"
+                self.images.append((fname, buf.read()))
+                self.manifest.append({"file": fname, "title": f"Figure {counter['i']}"})
+                plt.close(fig)
+            except Exception as e:
+                st.warning(f"Could not capture figure: {e}")
 
         plt.show = _show
         return self
