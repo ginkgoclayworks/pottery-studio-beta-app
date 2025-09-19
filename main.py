@@ -2193,6 +2193,30 @@ def build_complete_overrides(params_state: dict) -> dict:
     for param in economic_params:
         if param in params_state:
             overrides[param] = params_state[param]
+    # --- BUGFIX: Wire loan knobs from UI -> simulator ---
+    # The simulator expects these globals; previously they were not forwarded,
+    # causing DSCR to be computed with simulator defaults instead of UI values.
+    loan_param_map = [
+        "RUNWAY_MONTHS",
+        "LOAN_504_ANNUAL_RATE", "LOAN_504_TERM_YEARS", "IO_MONTHS_504",
+        "LOAN_7A_ANNUAL_RATE",  "LOAN_7A_TERM_YEARS",  "IO_MONTHS_7A",
+        "LOAN_CONTINGENCY_PCT", "EXTRA_BUFFER",
+        "FEES_UPFRONT_PCT_7A", "FEES_UPFRONT_PCT_504",
+        "FEES_PACKAGING", "FEES_CLOSING",
+        "FINANCE_FEES_7A", "FINANCE_FEES_504",
+    ]
+    for k in loan_param_map:
+        if k in params_state:
+            overrides[k] = params_state[k]
+
+    # Map UI override fields to simulator globals
+    ov504 = params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0) or 0
+    ov7a  = params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0) or 0
+    if float(ov504) > 0:
+        overrides["LOAN_OVERRIDE_504"] = float(ov504)
+    if float(ov7a) > 0:
+        overrides["LOAN_OVERRIDE_7A"] = float(ov7a)
+
     
     # Scenario config wrapper (required by simulator)
     grant_amount = params_state.get("grant_amount", 0.0)
