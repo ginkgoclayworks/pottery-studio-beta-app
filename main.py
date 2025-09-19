@@ -1274,14 +1274,33 @@ def calculate_loan_metrics(df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str
     if "LOAN_504_AMOUNT_OVERRIDE" in params and params["LOAN_504_AMOUNT_OVERRIDE"] > 0:
         total_504_amount = params["LOAN_504_AMOUNT_OVERRIDE"]
     else:
-        capex_items = params.get("CAPEX_ITEMS", [])
-        total_504_amount = sum(item.get("unit_cost", 0) * item.get("count", 1) 
-                              for item in capex_items 
-                              if item.get("enabled", True) and item.get("finance_504", True))
-        # Apply contingency
-        contingency = params.get("LOAN_CONTINGENCY_PCT", 0.08)
-        total_504_amount *= (1 + contingency)
-        # Add explicit 504 buffer if provided
+        # Robustly coerce & filter CAPEX rows before summing
+        raw_items = params.get("CAPEX_ITEMS", []) or []
+        try:
+            capex_df = pd.DataFrame(raw_items)
+        except Exception:
+            capex_df = pd.DataFrame([])
+
+        if not capex_df.empty:
+            # Ensure required columns exist
+            for col in ("enabled", "finance_504", "unit_cost", "count"):
+                if col not in capex_df.columns:
+                    capex_df[col] = [True] * len(capex_df) if col in ("enabled", "finance_504") else 0
+
+            # Type coercion (prevents "string x int" oddities)
+            capex_df["unit_cost"] = pd.to_numeric(capex_df["unit_cost"], errors="coerce").fillna(0.0)
+            capex_df["count"]     = pd.to_numeric(capex_df["count"],     errors="coerce").fillna(1).astype(int)
+            capex_df["enabled"]   = capex_df["enabled"].fillna(True).astype(bool)
+            capex_df["finance_504"] = capex_df["finance_504"].fillna(True).astype(bool)
+
+            sel = capex_df["enabled"] & capex_df["finance_504"]
+            total_504_amount = float((capex_df.loc[sel, "unit_cost"] * capex_df.loc[sel, "count"]).sum())
+        else:
+            total_504_amount = 0.0
+
+        # Apply contingency & explicit buffer
+        contingency = float(params.get("LOAN_CONTINGENCY_PCT", 0.08) or 0.0)
+        total_504_amount *= (1.0 + contingency)
         total_504_amount += float(params.get("EXTRA_504_BUFFER", 0.0) or 0.0)
     
     # Calculate 7(a) amount from OpEx (use user override if provided)
