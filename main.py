@@ -2213,7 +2213,7 @@ def render_complete_ui():
                 )
     
     # Equipment configuration (special handling)
-    with st.expander("🔧 Equipment & Capital Expenditures", expanded=False):
+    with st.expander("🔧 Staff payroll Expenditures", expanded=False):
         st.markdown("**Staff hiring schedule**")
         st.caption("Define when staff are hired, their compensation, and duration of employment.")
         
@@ -2477,14 +2477,34 @@ def render_complete_ui():
         
         # Enhanced Loan Amount Displays
         with st.expander("💰 Loan Amount Summary", expanded=True):
-            # Ensure loan metrics are available in this scope
+            # --- NEW: ensure loan metrics exist in this scope
             params_state = st.session_state.params_state
             loan_metrics = calculate_loan_metrics(df, params_state)
+
+            # --- NEW: prefill session with calculated values, but allow overrides
+            calc_504 = int(loan_metrics.get("total_504_amount", 0) or 0)
+            calc_7a  = int(loan_metrics.get("total_7a_amount", 0) or 0)
+            if "loan_504_amount" not in st.session_state:
+                st.session_state.loan_504_amount = calc_504
+            if "loan_7a_amount" not in st.session_state:
+                st.session_state.loan_7a_amount = calc_7a
+
             col1, col2 = st.columns(2)
             
             with col1:
                 st.subheader("SBA 504 Loan (CapEx)")
-                total_504 = loan_metrics["total_504_amount"]
+                # --- NEW: visible, editable 504 field (pre-filled with calculated value)
+                total_504 = st.number_input(
+                    "SBA 504 Total Loan Ask ($)",
+                    key="ui_total_504_amount",
+                    min_value=0,
+                    step=1000,
+                    value=int(st.session_state.loan_504_amount),
+                    help="Pre-filled from calculated 504-eligible CapEx. Edit to override."
+                )
+                # keep session in sync
+                st.session_state.loan_504_amount = int(total_504)
+                               
                 override_504 = params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0)
                 if override_504 > 0:
                     st.metric("Used Loan Amount (Override)", f"${total_504:,.0f}")
@@ -2495,7 +2515,19 @@ def render_complete_ui():
             
             with col2:
                 st.subheader("SBA 7(a) Loan (OpEx)")
-                total_7a = loan_metrics["total_7a_amount"]
+# --- NEW: visible, editable 7(a) field (pre-filled with calculated value)
+                total_7a = st.number_input(
+                    "SBA 7(a) Total Loan Ask ($)",
+                    key="ui_total_7a_amount",
+                    min_value=0,
+                    step=1000,
+                    value=int(st.session_state.loan_7a_amount),
+                    help="Pre-filled from calculated working-capital/fit. Edit to override."
+                )
+                # keep session in sync
+                st.session_state.loan_7a_amount = int(total_7a)
+                
+                
                 override_7a = params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0)
                 if override_7a > 0:
                     st.metric("Used Loan Amount (Override)", f"${total_7a:,.0f}")
