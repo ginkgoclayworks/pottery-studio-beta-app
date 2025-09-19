@@ -1113,6 +1113,16 @@ COMPLETE_PARAM_SPECS = {
     },
 }
 
+# --- Ensure separate 504 buffer parameter exists (for misc CapEx not captured elsewhere)
+if "EXTRA_504_BUFFER" not in COMPLETE_PARAM_SPECS:
+    COMPLETE_PARAM_SPECS["EXTRA_504_BUFFER"] = {
+        "type": "float", "min": 0.0, "max": 200000.0, "step": 500.0, "default": 0.0,
+        "label": "SBA 504 Misc Buffer ($)",
+        "desc": "Extra amount to add on top of 504-eligible equipment total + contingency. Use for buildout odds-and-ends not itemized.",
+        "group": "financing"
+    }
+
+
 # GROUP DEFINITIONS WITH LOGICAL ORGANIZATION
 PARAMETER_GROUPS = {
     "membership_trajectory": {
@@ -1271,6 +1281,8 @@ def calculate_loan_metrics(df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str
         # Apply contingency
         contingency = params.get("LOAN_CONTINGENCY_PCT", 0.08)
         total_504_amount *= (1 + contingency)
+        # Add explicit 504 buffer if provided
+        total_504_amount += float(params.get("EXTRA_504_BUFFER", 0.0) or 0.0)
     
     # Calculate 7(a) amount from OpEx (use user override if provided)
     if "LOAN_7A_AMOUNT_OVERRIDE" in params and params["LOAN_7A_AMOUNT_OVERRIDE"] > 0:
@@ -1282,8 +1294,8 @@ def calculate_loan_metrics(df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str
         monthly_insurance = params.get("INSURANCE_COST", 75)
         monthly_base_opex = monthly_rent + monthly_owner_draw + monthly_insurance
         
-        # Use 8 months as default runway for 7(a) sizing
-        runway_months = 8
+        # Use RUNWAY_MONTHS when provided for 7(a) sizing
+        runway_months = int(params.get("RUNWAY_MONTHS", 8) or 8)
         extra_buffer = params.get("EXTRA_BUFFER", 10000)
         total_7a_amount = (monthly_base_opex * runway_months) + extra_buffer
     
@@ -1909,11 +1921,11 @@ def render_parameter_group(group_name: str, group_info: dict, params_state: dict
     # Show all parameters for this group directly (no nested advanced sections)
     for param_name in sorted(group_params.keys()):
         spec = COMPLETE_PARAM_SPECS[param_name]
-        params_state[param_name] = render_single_parameter(param_name, spec, params_state.get(param_name))
+        params_state[param_name] = render_single_parameter(param_name, spec, params_state.get(param_name), params_state)
     
     return params_state
 
-def render_single_parameter(param_name: str, spec: dict, current_value: Any) -> Any:
+def render_single_parameter(param_name: str, spec: dict, current_value: Any, params_state: dict) -> Any:
     """Render individual parameter with appropriate Streamlit widget"""
     
     param_type = spec["type"]
@@ -1924,6 +1936,35 @@ def render_single_parameter(param_name: str, spec: dict, current_value: Any) -> 
     if current_value is None:
         current_value = spec.get("default", get_param_default(spec))
     
+        # Suggestion logic for loan amount overrides
+    if param_name in ("LOAN_504_AMOUNT_OVERRIDE", "LOAN_7A_AMOUNT_OVERRIDE"):
+        try:
+            if param_name == "LOAN_504_AMOUNT_OVERRIDE":
+                capex_items = params_state.get("CAPEX_ITEMS", []) or []
+                base_504 = sum(
+                    float(item.get("unit_cost", 0)) * float(item.get("count", 1))
+                    for item in capex_items
+                    if (item.get("enabled", True) and item.get("finance_504", True))
+                )
+                contingency = float(params_state.get("LOAN_CONTINGENCY_PCT", 0.08) or 0.0)
+                extra_504 = float(params_state.get("EXTRA_504_BUFFER", 0.0) or 0.0)
+                suggested = int(round(base_504 * (1.0 + contingency) + extra_504))
+            else:
+                monthly_rent = float(params_state.get("RENT", 3500) or 0.0)
+                monthly_owner_draw = float(params_state.get("OWNER_DRAW", 2000) or 0.0)
+                monthly_insurance = float(params_state.get("INSURANCE_COST", 75) or 0.0)
+                monthly_base_opex = monthly_rent + monthly_owner_draw + monthly_insurance
+                runway_months = int(params_state.get("RUNWAY_MONTHS", 8) or 8)
+                extra_buffer = float(params_state.get("EXTRA_BUFFER", 10000) or 0.0)
+                suggested = int(round(monthly_base_opex * runway_months + extra_buffer))
+            # Only prefill when value is unset or explicitly zero
+            if current_value is None or (isinstance(current_value, (int, float)) and float(current_value) == 0.0):
+                current_value = suggested
+            # Append suggestion to the tooltip
+            desc = f"{desc} Suggested: ${suggested:,.0f} based on current CapEx/OpEx."
+        except Exception:
+            pass
+
     # Create help text
     help_text = f"{desc}"
     if "min" in spec and "max" in spec:
@@ -2245,6 +2286,13 @@ def render_complete_ui():
                 st.session_state.params_state = render_parameter_group(
                     group_name, group_info, st.session_state.params_state
                 )
+                # Financing group convenience actions
+                if group_name == "financing":
+                    st.caption("Tip: Click below to refresh the 504 and 7(a) fields with current suggestions.")
+                    if st.button("Reset loan asks to suggestions", key="btn_reset_loan_suggestions"):
+                        st.session_state.params_state["LOAN_504_AMOUNT_OVERRIDE"] = 0.0
+                        st.session_state.params_state["LOAN_7A_AMOUNT_OVERRIDE"] = 0.0
+                        st.experimental_rerun()
     
     # Equipment configuration (special handling)
     with st.expander("🔧 Staff payroll Expenditures", expanded=False):
