@@ -2479,46 +2479,37 @@ def render_complete_ui():
         with st.expander("💰 Loan Amount Summary", expanded=True):
             col1, col2 = st.columns(2)
             
-            # Calculate auto amounts for display
-            capex_items = st.session_state.params_state.get("CAPEX_ITEMS", [])
-            auto_504_amount = sum(item.get("unit_cost", 0) * item.get("count", 1) 
-                                 for item in capex_items 
-                                 if item.get("enabled", True) and item.get("finance_504", True))
-            contingency = st.session_state.params_state.get("LOAN_CONTINGENCY_PCT", 0.08)
-            auto_504_amount *= (1 + contingency)
-            
-            monthly_rent = st.session_state.params_state.get("RENT", 3500)
-            monthly_owner_draw = st.session_state.params_state.get("OWNER_DRAW", 2000) 
-            monthly_insurance = st.session_state.params_state.get("INSURANCE_COST", 75)
-            monthly_base_opex = monthly_rent + monthly_owner_draw + monthly_insurance
-            auto_7a_amount = (monthly_base_opex * 8) + st.session_state.params_state.get("EXTRA_BUFFER", 10000)
-            
             with col1:
                 st.subheader("SBA 504 Loan (CapEx)")
-                override_504 = st.session_state.params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0)
-                used_504_amount = override_504 if override_504 > 0 else auto_504_amount
-                
-                st.metric("Auto-calculated from CapEx", f"${auto_504_amount:,.0f}")
+                total_504 = loan_metrics["total_504_amount"]
+                override_504 = params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0)
                 if override_504 > 0:
-                    delta_504 = override_504 - auto_504_amount
-                    st.metric("User Override Amount", f"${override_504:,.0f}", 
-                             delta=f"${delta_504:+,.0f} vs auto")
-                st.metric("Will be used in simulation", f"${used_504_amount:,.0f}")
+                    st.metric("Used Loan Amount (Override)", f"${total_504:,.0f}")
+                else:
+                    st.metric("Used Loan Amount (Auto-calc)", f"${total_504:,.0f}")
+                st.metric("Interest-Only Payment", f"${loan_metrics['io_payment_504']:,.0f}/month")
+                st.metric("Amortizing Payment", f"${loan_metrics['amort_payment_504']:,.0f}/month")
             
             with col2:
                 st.subheader("SBA 7(a) Loan (OpEx)")
-                override_7a = st.session_state.params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0)
-                used_7a_amount = override_7a if override_7a > 0 else auto_7a_amount
-                
-                st.metric("Auto-calculated from OpEx", f"${auto_7a_amount:,.0f}")
-                st.caption(f"Based on: ${monthly_base_opex:,.0f}/month × 8 months + ${st.session_state.params_state.get('EXTRA_BUFFER', 10000):,.0f} buffer")
+                total_7a = loan_metrics["total_7a_amount"]
+                override_7a = params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0)
                 if override_7a > 0:
-                    delta_7a = override_7a - auto_7a_amount
-                    st.metric("User Override Amount", f"${override_7a:,.0f}",
-                             delta=f"${delta_7a:+,.0f} vs auto")
-                st.metric("Will be used in simulation", f"${used_7a_amount:,.0f}")
-        
-        # Summary statistics table
+                    st.metric("Used Loan Amount (Override)", f"${total_7a:,.0f}")
+                else:
+                    st.metric("Used Loan Amount (Auto-calc)", f"${total_7a:,.0f}")
+                st.metric("Interest-Only Payment", f"${loan_metrics['io_payment_7a']:,.0f}/month")
+                st.metric("Amortizing Payment", f"${loan_metrics['amort_payment_7a']:,.0f}/month")
+            
+            # Total debt service
+            st.subheader("Combined Debt Service")
+            total_io = loan_metrics['io_payment_504'] + loan_metrics['io_payment_7a']
+            total_amort = loan_metrics['amort_payment_504'] + loan_metrics['amort_payment_7a']
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Debt", f"${total_504 + total_7a:,.0f}")
+            col2.metric("IO Period Payment", f"${total_io:,.0f}/month")
+            col3.metric("Amortizing Payment", f"${total_amort:,.0f}/month")
         st.header("📈 Detailed Results")
         
         # Compute key statistics by simulation
