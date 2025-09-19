@@ -1434,37 +1434,71 @@ def render_loan_analysis(df: pd.DataFrame, params_state: Dict[str, Any]):
     st.header("🏦 Loan Analysis & DSCR Assessment")
     st.markdown("Professional loan analysis with debt service coverage ratio (DSCR) metrics that SBA lenders expect.")
     
-    # Calculate loan metrics
+    # Calculate loan metrics first (this section will always render)
     loan_metrics = calculate_loan_metrics(df, params_state)
-    dscr_metrics = calculate_dscr_metrics(df)
+
+    # Prefill editable values with calculated suggestions
+    calc_504 = int(loan_metrics.get("total_504_amount", 0) or 0)
+    calc_7a  = int(loan_metrics.get("total_7a_amount", 0) or 0)
+    if "loan_504_amount" not in st.session_state:
+        st.session_state.loan_504_amount = calc_504
+    if "loan_7a_amount" not in st.session_state:
+        st.session_state.loan_7a_amount = calc_7a
     
-    # Enhanced Loan Amount Displays
+    # Enhanced Loan Amount Displays (always rendered)
     with st.expander("💰 Loan Amount Summary", expanded=True):
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("SBA 504 Loan (CapEx)")
-            total_504 = loan_metrics["total_504_amount"]
-            st.metric("Total 504 Loan Amount", f"${total_504:,.0f}")
+            # NEW: editable loan ask (pre-filled with calculated suggestion)
+            total_504 = st.number_input(
+                "SBA 504 Total Loan Ask ($)",
+                key="ui_total_504_amount",
+                min_value=0,
+                step=1000,
+                value=int(st.session_state.loan_504_amount),
+                help="Pre-filled from calculated 504-eligible CapEx. Edit to override."
+            )
+            st.session_state.loan_504_amount = int(total_504)
+            # Show the suggestion alongside
+            st.metric("Calculated 504 (suggested)", f"${calc_504:,.0f}")
             st.metric("Interest-Only Payment", f"${loan_metrics['io_payment_504']:,.0f}/month")
             st.metric("Amortizing Payment", f"${loan_metrics['amort_payment_504']:,.0f}/month")
-        
+ 
         with col2:
             st.subheader("SBA 7(a) Loan (OpEx)")
-            total_7a = loan_metrics["total_7a_amount"]
-            st.metric("Total 7(a) Loan Amount", f"${total_7a:,.0f}")
+            # NEW: editable loan ask (pre-filled with calculated suggestion)
+            total_7a = st.number_input(
+                "SBA 7(a) Total Loan Ask ($)",
+                key="ui_total_7a_amount",
+                min_value=0,
+                step=1000,
+                value=int(st.session_state.loan_7a_amount),
+                help="Pre-filled from calculated working-capital estimate. Edit to override."
+            )
+            st.session_state.loan_7a_amount = int(total_7a)
+            # Show the suggestion alongside
+            st.metric("Calculated 7(a) (suggested)", f"${calc_7a:,.0f}")
             st.metric("Interest-Only Payment", f"${loan_metrics['io_payment_7a']:,.0f}/month")
             st.metric("Amortizing Payment", f"${loan_metrics['amort_payment_7a']:,.0f}/month")
+
         
         # Total debt service
         st.subheader("Combined Debt Service")
         total_io = loan_metrics['io_payment_504'] + loan_metrics['io_payment_7a']
         total_amort = loan_metrics['amort_payment_504'] + loan_metrics['amort_payment_7a']
-        
+       
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Debt", f"${total_504 + total_7a:,.0f}")
         col2.metric("IO Period Payment", f"${total_io:,.0f}/month")
         col3.metric("Amortizing Payment", f"${total_amort:,.0f}/month")
+
+    # DSCR and charts can fail without hiding the expander; compute DSCR after
+    try:
+        dscr_metrics = calculate_dscr_metrics(df)
+    except Exception as _e:
+        dscr_metrics = {"error": str(_e)}
     
     # Loan Repayment Charts
     with st.expander("📊 Loan Repayment Visualization", expanded=False):
@@ -2594,24 +2628,9 @@ def render_complete_ui():
                 st.metric("50th Percentile Breakeven", f"{be_months.quantile(0.5):.0f} months" if len(be_months) > 0 else "Never")
                 st.metric("90th Percentile Breakeven", f"{be_months.quantile(0.9):.0f} months" if len(be_months) > 0 else "Never")
         
-        # Enhanced Loan Analysis Section
-        try:
-            render_loan_analysis(df, st.session_state.params_state)
-        except Exception as e:
-            st.warning(f"Loan analysis charts could not be generated: {e}")
-            st.info("Basic simulation results are still available, but loan analysis charts may not display properly.")
-            # Still show basic loan metrics without charts
-            st.subheader("Basic Loan Information")
-            try:
-                loan_metrics = calculate_loan_metrics(df, st.session_state.params_state)
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Estimated SBA 504 Loan", f"${loan_metrics['total_504_amount']:,.0f}")
-                with col2:
-                    st.metric("Estimated SBA 7(a) Loan", f"${loan_metrics['total_7a_amount']:,.0f}")
-            except:
-                pass
-        
+        # Enhanced Loan Analysis Section (render_loan_analysis handles its own errors)
+        render_loan_analysis(df, st.session_state.params_state)# Enhanced Loan Analysis Section
+         
         # Raw data download and display
         st.subheader("Raw Simulation Data")
         
