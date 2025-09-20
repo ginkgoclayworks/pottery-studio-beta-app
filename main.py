@@ -2565,12 +2565,85 @@ def run_simulation_with_validation():
 #             return
 
 
-# Replace the existing "Run simulation" section with this:
-
-# Run simulation
-if run_simulation:
-    run_simulation_with_validation()  # Use the new validation function
+# Add this call before running simulation (in the run_simulation section)
+def run_simulation_with_validation():
+    """Run simulation with pre-flight validation"""
     
+    # Validate parameters before running
+    validation_errors = validate_parameter_combination(st.session_state.params_state)
+    
+    if validation_errors:
+        st.error("Parameter validation failed:")
+        for error in validation_errors:
+            st.error(f"• {error}")
+        st.info("Please fix the issues above before running the simulation.")
+        return
+    
+    # Clear any existing cache to ensure fresh run
+    try:
+        st.cache_data.clear()
+    except:
+        pass
+        
+    with st.spinner("Running Monte Carlo simulation..."):
+        try:
+            # Build overrides from UI state
+            overrides = build_complete_overrides(st.session_state.params_state)
+            
+            # Add equipment items
+            if "CAPEX_ITEMS" in st.session_state.params_state:
+                overrides["CAPEX_ITEMS"] = _normalize_capex_items(pd.DataFrame(st.session_state.params_state["CAPEX_ITEMS"]))
+            
+            # Add firing fee schedule
+            if "FIRING_FEE_SCHEDULE" in st.session_state.params_state:
+                overrides["FIRING_FEE_SCHEDULE"] = st.session_state.params_state["FIRING_FEE_SCHEDULE"]
+
+            # Run simulation with figure capture
+            with FigureCapture("User Defined Scenario") as cap:
+                results = run_original_once("modular_simulator.py", overrides)
+            
+            if isinstance(results, tuple):
+                df, eff = results
+            else:
+                df = results
+                eff = None
+            
+            if df is None or df.empty:
+                st.error("Simulation returned no results. Check parameter values and try again.")
+                return
+            
+            # Store results in session state
+            st.session_state["simulation_results"] = df
+            st.session_state["simulation_images"] = cap.images
+            st.session_state["simulation_manifest"] = cap.manifest
+            
+            # Display results
+            st.success(f"Simulation completed: {len(df)} result rows generated")
+            
+            # Key metrics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            final_month = df["month"].max()
+            final_data = df[df["month"] == final_month]
+            
+            # Survival rate - check if any simulation went negative
+            survival_rate = (df.groupby("simulation_id")["cash_balance"].min() >= 0).mean()
+            
+            col1.metric("Survival Rate", f"{survival_rate:.1%}")
+            col2.metric("Median Final Cash", f"${final_data['cash_balance'].median():,.0f}")
+            
+            if "active_members" in df.columns:
+                col3.metric("Median Final Members", f"{final_data['active_members'].median():.0f}")
+            
+            if "dscr" in df.columns:
+                final_dscr = final_data["dscr"].replace([np.inf, -np.inf], np.nan)
+                col4.metric("Median Final DSCR", f"{final_dscr.median():.2f}")
+            
+        except Exception as e:
+            st.error(f"Simulation failed: {e}")
+            st.exception(e)
+            return
+
 def get_param_default(spec: dict) -> Any:
     """Get appropriate default value for parameter spec"""
     if "default" in spec:
@@ -3091,74 +3164,10 @@ def render_complete_ui():
 
         run_simulation = st.form_submit_button("🚀 Run Simulation", type="primary")
     
-    # Run simulation
-    if run_simulation:
-        # Clear any existing cache to ensure fresh run
-        try:
-            st.cache_data.clear()
-        except:
-            pass
-            
-        with st.spinner("Running Monte Carlo simulation..."):
-            try:
-                # Build overrides from UI state
-                overrides = build_complete_overrides(st.session_state.params_state)
-                
-                # Add equipment items
-                if "CAPEX_ITEMS" in st.session_state.params_state:
-                    overrides["CAPEX_ITEMS"] = _normalize_capex_items(pd.DataFrame(st.session_state.params_state["CAPEX_ITEMS"]))
-                
-                # Add firing fee schedule
-                if "FIRING_FEE_SCHEDULE" in st.session_state.params_state:
-                    # Pass as a native list of dicts; simulator also supports JSON string
-                    import json as _json  # available for any future JSON encoding
-                    overrides["FIRING_FEE_SCHEDULE"] = st.session_state.params_state["FIRING_FEE_SCHEDULE"]
 
-                # Run simulation with figure capture
-                with FigureCapture("User Defined Scenario") as cap:
-                    results = run_original_once("modular_simulator.py", overrides)
-                
-                if isinstance(results, tuple):
-                    df, eff = results
-                else:
-                    df = results
-                    eff = None
-                
-                if df is None or df.empty:
-                    st.error("Simulation returned no results. Check parameter values and try again.")
-                    return
-                
-                # Store results in session state
-                st.session_state["simulation_results"] = df
-                st.session_state["simulation_images"] = cap.images
-                st.session_state["simulation_manifest"] = cap.manifest
-                
-                # Display results
-                st.success(f"Simulation completed: {len(df)} result rows generated")
-                
-                # Key metrics
-                col1, col2, col3, col4 = st.columns(4)
-                
-                final_month = df["month"].max()
-                final_data = df[df["month"] == final_month]
-                
-                # Survival rate - check if any simulation went negative
-                survival_rate = (df.groupby("simulation_id")["cash_balance"].min() >= 0).mean()
-                
-                col1.metric("Survival Rate", f"{survival_rate:.1%}")
-                col2.metric("Median Final Cash", f"${final_data['cash_balance'].median():,.0f}")
-                
-                if "active_members" in df.columns:
-                    col3.metric("Median Final Members", f"{final_data['active_members'].median():.0f}")
-                
-                if "dscr" in df.columns:
-                    final_dscr = final_data["dscr"].replace([np.inf, -np.inf], np.nan)
-                    col4.metric("Median Final DSCR", f"{final_dscr.median():.2f}")
-                
-            except Exception as e:
-                st.error(f"Simulation failed: {e}")
-                st.exception(e)
-                return
+   # Run simulation
+    if run_simulation:
+        run_simulation_with_validation()
     
     # Display results if available
     if "simulation_results" in st.session_state:
