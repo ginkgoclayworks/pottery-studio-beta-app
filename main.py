@@ -3027,11 +3027,12 @@ def render_complete_ui():
                 "label": st.column_config.TextColumn("Equipment", help="Equipment description"),
                 "count": st.column_config.NumberColumn("Quantity", min_value=1, step=1, help="Number of units"),
                 "unit_cost": st.column_config.NumberColumn("Unit Cost ($)", min_value=0, step=100, help="Cost per unit"),
-                "month": st.column_config.NumberColumn("Trigger Month", min_value=0, step=1, help="Month to purchase (0=immediate, leave blank for member-based)"),
-                "member_threshold": st.column_config.NumberColumn("Member Threshold", min_value=0, step=1, help="Member count to trigger purchase (leave blank for month-based)"),
+                "month": st.column_config.NumberColumn("Trigger Month", min_value=0, step=1, help="Month to purchase (0=immediate, leave blank for member-based trigger)"),
+                "member_threshold": st.column_config.NumberColumn("Member Threshold", min_value=0, step=1, help="Member count to trigger purchase (leave blank for month-based trigger)"),
                 "finance_504": st.column_config.CheckboxColumn("SBA 504", help="Finance through SBA 504 loan")
             }
         )
+        
         
         # Update session state
         st.session_state.params_state["CAPEX_ITEMS"] = edited_df.to_dict("records")
