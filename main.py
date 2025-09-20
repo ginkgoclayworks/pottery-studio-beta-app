@@ -3004,13 +3004,13 @@ def render_complete_ui():
         # Default equipment configuration
         default_capex = [
             {"enabled": True,  "label": "Kiln #1 Skutt 1227", "count": 1,  "unit_cost": 7000, "month": 0,    "member_threshold": None, "finance_504": True},
-            {"enabled": True,  "label": "Pottery Wheels",     "count": 4,  "unit_cost": 800,  "month": 0,    "member_threshold": None, "finance_504": True},
+            {"enabled": True,  "label": "Pottery Wheels",     "count": 12,  "unit_cost": 3000,  "month": 0,    "member_threshold": None, "finance_504": True},
             {"enabled": True,  "label": "Wire Racks",         "count": 10, "unit_cost": 100,  "month": 0,    "member_threshold": None, "finance_504": True},
-            {"enabled": True,  "label": "Clay Traps",         "count": 1,  "unit_cost": 400,  "month": 0,    "member_threshold": None, "finance_504": True},
-            {"enabled": False, "label": "Kiln #2 Skutt 1427", "count": 1,  "unit_cost": 9000, "month": 6,    "member_threshold": None, "finance_504": True},
+            {"enabled": True,  "label": "Clay Traps",         "count": 1,  "unit_cost": 200,  "month": 0,    "member_threshold": None, "finance_504": True},
+            {"enabled": False, "label": "Kiln #2 Skutt 1427", "count": 1,  "unit_cost": 9000, "month": 0,    "member_threshold": None, "finance_504": True},
             {"enabled": False, "label": "Slab Roller",        "count": 1,  "unit_cost": 3000, "month": None, "member_threshold": 50,   "finance_504": True},
             {"enabled": False, "label": "Pug Mill",           "count": 1,  "unit_cost": 4500, "month": None, "member_threshold": 75,   "finance_504": True},
-         ]
+        ]
         
         if "CAPEX_ITEMS" not in st.session_state.params_state:
             st.session_state.params_state["CAPEX_ITEMS"] = default_capex
