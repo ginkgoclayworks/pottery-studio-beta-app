@@ -2672,30 +2672,11 @@ def render_complete_ui():
         st.session_state.params_state = guided_setup_form(st.session_state.params_state)
         st.markdown("---")
     
-    # Group visibility and reset (moved from sidebar)
-    st.subheader("View")
-    show_all_groups = st.checkbox("Show all parameter groups", value=False)
-    if not show_all_groups:
-        selected_groups = st.multiselect(
-            "Select parameter groups to show:",
-            options=list(PARAMETER_GROUPS.keys()),
-            default=["business_fundamentals", "pricing", "capacity"],
-            format_func=lambda x: PARAMETER_GROUPS[x]["title"]
-        )
-    else:
-        selected_groups = list(PARAMETER_GROUPS.keys())
-
-    # Reset to defaults button
-    if st.button("Reset All to Defaults"):
-        st.session_state.params_state = {}
-        for param_name, spec in COMPLETE_PARAM_SPECS.items():
-            st.session_state.params_state[param_name] = spec.get("default", get_param_default(spec))
-        st.experimental_rerun()
-
     # Main parameter interface
     st.header("Parameter Configuration")
     st.markdown("Each parameter includes a tooltip explaining its impact on the model. Adjust values based on your specific situation and market research.")
     
+    selected_groups = list(PARAMETER_GROUPS.keys())
     # Render selected parameter groups
     groups_by_priority = sorted(
         [(k, v) for k, v in PARAMETER_GROUPS.items() if k in selected_groups],
