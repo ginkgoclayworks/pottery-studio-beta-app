@@ -2789,44 +2789,52 @@ def render_complete_ui():
         try:
             edited_records = edited_df.to_dict("records")
             validation_errors = []
+            cleaned_records = []
             
             for i, item in enumerate(edited_records):
                 if item.get("enabled", False):
-                    # Check required fields
+                    # Required: label
                     if not item.get("label", "").strip():
                         validation_errors.append(f"Row {i+1}: Equipment label is required")
-                    
+
+                    # Normalize numeric fields
                     unit_cost = item.get("unit_cost", 0)
                     count = item.get("count", 0)
-                    
                     try:
-                        unit_cost = float(unit_cost) if unit_cost is not None else 0
+                        unit_cost = float(unit_cost) if unit_cost is not None else 0.0
                         count = int(count) if count is not None else 0
                     except (ValueError, TypeError):
                         validation_errors.append(f"Row {i+1}: Invalid unit cost or count")
-                        continue
-                    
-                    if unit_cost <= 0:
-                        validation_errors.append(f"Row {i+1}: Unit cost must be greater than 0")
-                    if count <= 0:
-                        validation_errors.append(f"Row {i+1}: Count must be greater than 0")
-                    
-                    # Check trigger logic
-                    month = item.get("month")
-                    threshold = item.get("member_threshold")
-                    
+
+                    # Normalize trigger fields
+                    month = item.get("month", None)
+                    threshold = item.get("member_threshold", None)
+                    month = None if month == "" else month
+                    threshold = None if threshold == "" else threshold
+
+                    # Auto-default behavior:
+                    # If neither trigger is provided, assume month 0 (purchase at start)
                     if month is None and threshold is None:
-                        validation_errors.append(f"Row {i+1}: Must specify either trigger month or member threshold")
-                    elif month is not None and threshold is not None:
+                        month = 0
+
+                    # Validation: cannot provide both
+                    if (month is not None) and (threshold is not None):
                         validation_errors.append(f"Row {i+1}: Cannot specify both trigger month and member threshold")
-            
+
+                    # Persist normalized values
+                    item["unit_cost"], item["count"] = unit_cost, count
+                    item["month"], item["member_threshold"] = month, threshold
+                    cleaned_records.append(item)
+                else:
+                    cleaned_records.append(item)
+
             if validation_errors:
                 st.error("Equipment configuration errors:")
                 for error in validation_errors:
                     st.error(f"• {error}")
             else:
-                # Update session state only if validation passes
-                st.session_state.params_state["CAPEX_ITEMS"] = edited_records
+                # Only update state when validation passes (write cleaned data)
+                st.session_state.params_state["CAPEX_ITEMS"] = cleaned_records
                 
         except Exception as e:
             st.error(f"Error validating equipment configuration: {e}")
