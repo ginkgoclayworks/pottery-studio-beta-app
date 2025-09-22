@@ -11,7 +11,6 @@ guided_setup_form.py
 One-page Guided Setup form for ceramics studio financial simulator.
 """
 
-from __future__ import annotations
 from typing import Dict, Any, List
 import streamlit as st
 
