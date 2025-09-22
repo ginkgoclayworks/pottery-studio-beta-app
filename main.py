@@ -17,10 +17,13 @@ from modular_simulator import get_default_cfg
 from final_batch_adapter import run_original_once
 from sba_export import export_to_sba_workbook
 import os
-plt.rcParams["font.family"] = "DejaVu Sans"   # default matplotlib font
+from guided_setup_form import guided_setup_form
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+plt.rcParams["font.family"] = "DejaVu Sans"   # default matplotlib font
 
+if "params_state" not in st.session_state:
+    st.session_state.params_state = {}
 
 def pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     """Find first available column from candidates list"""
@@ -2664,6 +2667,11 @@ def render_complete_ui():
         for param_name, spec in COMPLETE_PARAM_SPECS.items():
             st.session_state.params_state[param_name] = spec.get("default", get_param_default(spec))
     
+    # --- Guided Setup block (one page form) ---
+    with st.expander("✨ Guided Setup (recommended)", expanded=True):
+        st.session_state.params_state = guided_setup_form(st.session_state.params_state)
+        st.markdown("---")
+    
     # Group visibility and reset (moved from sidebar)
     st.subheader("View")
     show_all_groups = st.checkbox("Show all parameter groups", value=False)
@@ -2900,6 +2908,9 @@ def render_complete_ui():
         if cleaned and cleaned[-1]["up_to_lbs"] is not None:
             cleaned.append({"up_to_lbs": None, "rate": cleaned[-1]["rate"]})
         st.session_state.params_state["FIRING_FEE_SCHEDULE"] = cleaned
+
+
+
 
     # Run form at bottom
     with st.form("run_form"):
