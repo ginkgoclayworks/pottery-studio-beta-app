@@ -2161,19 +2161,7 @@ def _core_simulation_and_reports():
     # Global membership (median + band) with cap
     g = results_df.groupby("month")["active_members"]
     med = g.median(); p10 = g.quantile(0.10); p90 = g.quantile(0.90)
-    # plt.figure(figsize=(10,6))
-    # plt.plot(med.index, med.values, linewidth=2, label="Median")
-    # plt.fill_between(med.index, p10.values, p90.values, alpha=0.12, label="10–90% range")
-    # plt.axhline(MEMBERSHIP_SOFT_CAP, linestyle="--", linewidth=1.5, label=f"Soft cap ≈ {MEMBERSHIP_SOFT_CAP:.0f}")
-    # # Optional hard cap (if MAX_MEMBERS is set)
-    # try:
-    #     plt.axhline(MAX_MEMBERS, linestyle=":", linewidth=1.5, color="orange", label=f"Hard cap = {int(MAX_MEMBERS)}")
-    # except Exception:
-    #     pass
-    # plt.title("Projected Membership Over Time — Capacity-aware")
-    # plt.xlabel("Month"); plt.ylabel("Active Members")
-    # plt.legend(); plt.tight_layout(); plt.show()
-    
+     
     # Cash balance overlays per (scenario, rent)
     for scen in results_df["scenario"].unique():
         for rent_val in sorted(results_df["rent"].unique()):
@@ -2221,8 +2209,13 @@ def _core_simulation_and_reports():
         pivot = be_df[be_df["scenario"] == scen].pivot_table(
             index="owner_draw", columns="rent", values="op_break_even_month", aggfunc="median"
         )
+        # Skip empty / all-NaN tables to avoid seaborn crash
+        if pivot.size == 0 or pivot.dropna(how="all").empty:
+            continue
         plt.figure(figsize=(8,6))
         sns.heatmap(pivot, annot=True, fmt=".0f", cmap="YlGnBu", cbar_kws={"label": "Months"})
+        
+        
         plt.title(f"Median Months to Operating Break-Even — {scen}")
         plt.xlabel("Monthly Rent ($)"); plt.ylabel("Owner Draw ($/mo)")
         plt.tight_layout(); plt.show()

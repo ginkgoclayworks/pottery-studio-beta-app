@@ -17,10 +17,6 @@ from modular_simulator import get_default_cfg
 from final_batch_adapter import run_original_once
 from sba_export import export_to_sba_workbook
 import os
-plt.rcParams["font.family"] = "DejaVu Sans"   # default matplotlib font
-import warnings
-warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
-
 
 def pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     """Find first available column from candidates list"""
@@ -958,19 +954,6 @@ COMPLETE_PARAM_SPECS = {
     # =============================================================================
     # FINANCING: SBA LOANS
     # =============================================================================
-    # SBA Loan Amounts (Auto-calculated from CapEx and OpEx)
-    "LOAN_504_AMOUNT_OVERRIDE": {
-        "type": "float", "min": 0.0, "max": 500000.0, "step": 1000.0, "default": 0.0,
-        "label": "SBA 504 Loan Amount Override ($, 0=Auto-calculate)",
-        "desc": "Manual override for SBA 504 loan amount. Leave at 0 to auto-calculate from CapEx equipment costs plus contingency.",
-        "group": "financing"
-    },
-    "LOAN_7A_AMOUNT_OVERRIDE": {
-        "type": "float", "min": 0.0, "max": 500000.0, "step": 1000.0, "default": 0.0,
-        "label": "SBA 7(a) Loan Amount Override ($, 0=Auto-calculate)", 
-        "desc": "Manual override for SBA 7(a) loan amount. Leave at 0 to auto-calculate from 8 months of OpEx (rent + owner draw + insurance).",
-        "group": "financing"
-    },
     "LOAN_504_ANNUAL_RATE": {
         "type": "float", "min": 0.03, "max": 0.15, "step": 0.001, "default": 0.070,
         "label": "SBA 504 Annual Rate",
@@ -1117,16 +1100,6 @@ COMPLETE_PARAM_SPECS = {
     },
 }
 
-# --- Ensure separate 504 buffer parameter exists (for misc CapEx not captured elsewhere)
-if "EXTRA_504_BUFFER" not in COMPLETE_PARAM_SPECS:
-    COMPLETE_PARAM_SPECS["EXTRA_504_BUFFER"] = {
-        "type": "float", "min": 0.0, "max": 200000.0, "step": 500.0, "default": 0.0,
-        "label": "SBA 504 Misc Buffer ($)",
-        "desc": "Extra amount to add on top of 504-eligible equipment total + contingency. Use for buildout odds-and-ends not itemized.",
-        "group": "financing"
-    }
-
-
 # GROUP DEFINITIONS WITH LOGICAL ORGANIZATION
 PARAMETER_GROUPS = {
     "membership_trajectory": {
@@ -1263,93 +1236,39 @@ PARAMETER_GROUPS = {
     }
 }
 
-
-
-def calculate_loan_metrics(df: pd.DataFrame, params_state: Dict[str, Any]) -> Dict[str, Any]:
+def calculate_loan_metrics(df: pd.DataFrame, params: Dict[str, Any]) -> Dict[str, Any]:
     """Calculate comprehensive loan analysis metrics from simulation results"""
     
     # Extract loan parameters
-    loan_504_rate = params_state.get("LOAN_504_ANNUAL_RATE", 0.070)
-    loan_7a_rate = params_state.get("LOAN_7A_ANNUAL_RATE", 0.115)
-    loan_504_term = params_state.get("LOAN_504_TERM_YEARS", 20)
-    loan_7a_term = params_state.get("LOAN_7A_TERM_YEARS", 7)
-    io_months_504 = params_state.get("IO_MONTHS_504", 6)
-    io_months_7a = params_state.get("IO_MONTHS_7A", 6)
+    loan_504_rate = params.get("LOAN_504_ANNUAL_RATE", 0.070)
+    loan_7a_rate = params.get("LOAN_7A_ANNUAL_RATE", 0.115)
+    loan_504_term = params.get("LOAN_504_TERM_YEARS", 20)
+    loan_7a_term = params.get("LOAN_7A_TERM_YEARS", 7)
+    io_months_504 = params.get("IO_MONTHS_504", 6)
+    io_months_7a = params.get("IO_MONTHS_7A", 6)
     
-    # FIXED: Properly handle loan overrides vs auto-calculation
-    override_504 = params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0.0)
-    override_7a = params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0.0)
+    # Estimate loan amounts from equipment and working capital needs
+    capex_items = params.get("CAPEX_ITEMS", [])
+    total_504_amount = sum(item.get("unit_cost", 0) * item.get("count", 1) 
+                          for item in capex_items 
+                          if item.get("enabled", True) and item.get("finance_504", True))
     
-    # Calculate 504 amount (use override if > 0, otherwise auto-calculate)
-    if override_504 and override_504 > 0:
-        total_504_amount = float(override_504)
-    else:
-        # Auto-calculate from CapEx items
-        capex_items = params_state.get("CAPEX_ITEMS", []) or []
-        total_504_base = 0.0
-        
-        if capex_items:
-            try:
-                # Handle both list of dicts and DataFrame formats
-                if isinstance(capex_items, pd.DataFrame):
-                    capex_df = capex_items
-                else:
-                    capex_df = pd.DataFrame(capex_items)
-                
-                # Ensure required columns exist with proper defaults
-                required_cols = {
-                    'enabled': True,
-                    'finance_504': True, 
-                    'unit_cost': 0.0,
-                    'count': 1
-                }
-                
-                for col, default_val in required_cols.items():
-                    if col not in capex_df.columns:
-                        capex_df[col] = default_val
-                
-                # FIXED: Add explicit type validation and coercion
-                capex_df["unit_cost"] = pd.to_numeric(capex_df["unit_cost"], errors="coerce").fillna(0.0)
-                capex_df["count"] = pd.to_numeric(capex_df["count"], errors="coerce").fillna(1).astype(int)
-                capex_df["enabled"] = capex_df["enabled"].fillna(True).astype(bool)
-                capex_df["finance_504"] = capex_df["finance_504"].fillna(True).astype(bool)
-                
-                # Calculate 504-eligible equipment total
-                enabled_504_items = capex_df[capex_df["enabled"] & capex_df["finance_504"]]
-                total_504_base = float((enabled_504_items["unit_cost"] * enabled_504_items["count"]).sum())
-                
-            except Exception as e:
-                print(f"Warning: Error processing CAPEX_ITEMS: {e}")
-                total_504_base = 0.0
-        
-        # Apply contingency & explicit buffer
-        contingency = float(params_state.get("LOAN_CONTINGENCY_PCT", 0.08) or 0.0)
-        extra_504 = float(params_state.get("EXTRA_504_BUFFER", 0.0) or 0.0)
-        total_504_amount = total_504_base * (1.0 + contingency) + extra_504
+    # Apply contingency
+    contingency = params.get("LOAN_CONTINGENCY_PCT", 0.08)
+    total_504_amount *= (1 + contingency)
     
-    # Calculate 7(a) amount (use override if > 0, otherwise auto-calculate)
-    if override_7a and override_7a > 0:
-        total_7a_amount = float(override_7a)
-    else:
-        # Auto-calculate from OpEx runway
-        monthly_rent = float(params_state.get("RENT", 3500) or 0.0)
-        monthly_owner_draw = float(params_state.get("OWNER_DRAW", 2000) or 0.0)
-        monthly_insurance = float(params_state.get("INSURANCE_COST", 75) or 0.0)
-        monthly_base_opex = monthly_rent + monthly_owner_draw + monthly_insurance
-        
-        runway_months = int(params_state.get("RUNWAY_MONTHS", 8) or 8)
-        extra_buffer = float(params_state.get("EXTRA_BUFFER", 10000) or 0.0)
-        total_7a_amount = (monthly_base_opex * runway_months) + extra_buffer
+    # Estimate 7(a) amount from operating runway
+    runway_months = params.get("RUNWAY_MONTHS", 12)
+    monthly_opex = params.get("RENT", 3500) + params.get("INSURANCE_COST", 75) + params.get("GLAZE_COST_PER_MONTH", 833)
+    extra_buffer = params.get("EXTRA_BUFFER", 10000)
+    total_7a_amount = (monthly_opex * runway_months) + extra_buffer
     
-    # Calculate monthly payments with proper error handling
+    # Calculate monthly payments
     def calculate_monthly_payment(principal, annual_rate, term_years, io_months=0):
         """Calculate monthly payment for loan with optional interest-only period"""
-        if principal <= 0:
-            return 0, 0
-            
         monthly_rate = annual_rate / 12
         if monthly_rate == 0:
-            return principal / (term_years * 12 - io_months), principal / (term_years * 12 - io_months)
+            return principal / (term_years * 12 - io_months)
         
         # Interest-only payment during IO period
         io_payment = principal * monthly_rate if io_months > 0 else 0
@@ -1357,7 +1276,7 @@ def calculate_loan_metrics(df: pd.DataFrame, params_state: Dict[str, Any]) -> Di
         # Amortizing payment after IO period
         amort_months = term_years * 12 - io_months
         if amort_months <= 0:
-            return principal / (term_years * 12), principal / (term_years * 12)
+            return principal / (term_years * 12)
             
         amort_payment = principal * (monthly_rate * (1 + monthly_rate)**amort_months) / ((1 + monthly_rate)**amort_months - 1)
         
@@ -1377,8 +1296,8 @@ def calculate_loan_metrics(df: pd.DataFrame, params_state: Dict[str, Any]) -> Di
     else:
         io_payment_7a, amort_payment_7a = 0, payments_7a
     
-    # Calculate outstanding balances over time with bounds checking
-    months = len(df[df["simulation_id"] == df["simulation_id"].iloc[0]]) if len(df) > 0 else 60
+    # Calculate outstanding balances over time
+    months = len(df[df["simulation_id"] == df["simulation_id"].iloc[0]])
     outstanding_504 = []
     outstanding_7a = []
     monthly_payments_504 = []
@@ -1389,23 +1308,21 @@ def calculate_loan_metrics(df: pd.DataFrame, params_state: Dict[str, Any]) -> Di
     
     for month in range(1, months + 1):
         # 504 loan
-        if month < io_months_504:
+        if month <= io_months_504:
             payment_504 = io_payment_504
             principal_payment_504 = 0
         else:
             payment_504 = amort_payment_504
-            interest_504 = balance_504 * loan_504_rate / 12
-            principal_payment_504 = max(0, payment_504 - interest_504)
+            principal_payment_504 = payment_504 - (balance_504 * loan_504_rate / 12)
             balance_504 = max(0, balance_504 - principal_payment_504)
         
         # 7(a) loan
-        if month < io_months_7a:
+        if month <= io_months_7a:
             payment_7a = io_payment_7a
             principal_payment_7a = 0
         else:
             payment_7a = amort_payment_7a
-            interest_7a = balance_7a * loan_7a_rate / 12
-            principal_payment_7a = max(0, payment_7a - interest_7a)
+            principal_payment_7a = payment_7a - (balance_7a * loan_7a_rate / 12)
             balance_7a = max(0, balance_7a - principal_payment_7a)
         
         outstanding_504.append(balance_504)
@@ -1493,53 +1410,37 @@ def render_loan_analysis(df: pd.DataFrame, params_state: Dict[str, Any]):
     st.header("🏦 Loan Analysis & DSCR Assessment")
     st.markdown("Professional loan analysis with debt service coverage ratio (DSCR) metrics that SBA lenders expect.")
     
-    # Calculate loan metrics (suggested principals & payments)
+    # Calculate loan metrics
     loan_metrics = calculate_loan_metrics(df, params_state)
-    calc_504 = int(loan_metrics.get("total_504_amount", 0) or 0)
-    calc_7a  = int(loan_metrics.get("total_7a_amount", 0) or 0)
-    # Effective principals used for payments/DSCR: override if >0 else suggestion
-    override_504 = int(params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0) or 0)
-    override_7a  = int(params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0) or 0)
-    used_504 = override_504 if override_504 > 0 else calc_504
-    used_7a  = override_7a  if override_7a  > 0 else calc_7a
+    dscr_metrics = calculate_dscr_metrics(df)
     
-    # Enhanced Loan Amount Displays (always rendered)
+    # Enhanced Loan Amount Displays
     with st.expander("💰 Loan Amount Summary", expanded=True):
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("SBA 504 Loan (CapEx)")
-            st.metric("Used Loan Amount (Override or Suggested)", f"${used_504:,.0f}")
-            st.caption(f"Suggested 504 principal: ${calc_504:,.0f}"
-                       + (" • Override active" if override_504 > 0 else " • Auto-calc"))
-
+            total_504 = loan_metrics["total_504_amount"]
+            st.metric("Total 504 Loan Amount", f"${total_504:,.0f}")
             st.metric("Interest-Only Payment", f"${loan_metrics['io_payment_504']:,.0f}/month")
             st.metric("Amortizing Payment", f"${loan_metrics['amort_payment_504']:,.0f}/month")
- 
+        
         with col2:
             st.subheader("SBA 7(a) Loan (OpEx)")
-            st.metric("Used Loan Amount (Override or Suggested)", f"${used_7a:,.0f}")
-            st.caption(f"Suggested 7(a) principal: ${calc_7a:,.0f}"
-                       + (" • Override active" if override_7a > 0 else " • Auto-calc"))
-
+            total_7a = loan_metrics["total_7a_amount"]
+            st.metric("Total 7(a) Loan Amount", f"${total_7a:,.0f}")
             st.metric("Interest-Only Payment", f"${loan_metrics['io_payment_7a']:,.0f}/month")
             st.metric("Amortizing Payment", f"${loan_metrics['amort_payment_7a']:,.0f}/month")
-
         
         # Total debt service
         st.subheader("Combined Debt Service")
         total_io = loan_metrics['io_payment_504'] + loan_metrics['io_payment_7a']
         total_amort = loan_metrics['amort_payment_504'] + loan_metrics['amort_payment_7a']
+        
         col1, col2, col3 = st.columns(3)
-        col1.metric("Total Debt", f"${used_504 + used_7a:,.0f}")
+        col1.metric("Total Debt", f"${total_504 + total_7a:,.0f}")
         col2.metric("IO Period Payment", f"${total_io:,.0f}/month")
         col3.metric("Amortizing Payment", f"${total_amort:,.0f}/month")
-
-    # DSCR and charts can fail without hiding the expander; compute DSCR after
-    try:
-        dscr_metrics = calculate_dscr_metrics(df)
-    except Exception as _e:
-        dscr_metrics = {"error": str(_e)}
     
     # Loan Repayment Charts
     with st.expander("📊 Loan Repayment Visualization", expanded=False):
@@ -1950,21 +1851,12 @@ def render_parameter_group(group_name: str, group_info: dict, params_state: dict
     # Show all parameters for this group directly (no nested advanced sections)
     for param_name in sorted(group_params.keys()):
         spec = COMPLETE_PARAM_SPECS[param_name]
-        params_state[param_name] = render_single_parameter(param_name, spec, params_state.get(param_name), params_state)
-    
-    # Special handling for financing group - add reset button
-    if group_name == "financing":
-        st.caption("Tip: Reset loan overrides to use auto-calculated amounts based on current equipment and OpEx settings.")
-        if st.button("Reset loan amounts to auto-calculate", key="btn_reset_loan_overrides"):
-            params_state["LOAN_504_AMOUNT_OVERRIDE"] = 0.0
-            params_state["LOAN_7A_AMOUNT_OVERRIDE"] = 0.0
-            st.success("Loan overrides cleared. Amounts will now auto-calculate from equipment and OpEx.")
-            st.experimental_rerun()
+        params_state[param_name] = render_single_parameter(param_name, spec, params_state.get(param_name))
     
     return params_state
 
-def render_single_parameter(param_name: str, spec: dict, current_value: Any, params_state: dict) -> Any:
-    """Render individual parameter with appropriate Streamlit widget and validation"""
+def render_single_parameter(param_name: str, spec: dict, current_value: Any) -> Any:
+    """Render individual parameter with appropriate Streamlit widget"""
     
     param_type = spec["type"]
     label = spec["label"]
@@ -1974,433 +1866,58 @@ def render_single_parameter(param_name: str, spec: dict, current_value: Any, par
     if current_value is None:
         current_value = spec.get("default", get_param_default(spec))
     
-    # FIXED: Add input validation and bounds checking
-    def validate_numeric_input(value, spec_dict):
-        """Validate numeric inputs are within reasonable bounds"""
-        if param_type in ["int", "float"]:
-            min_val = spec_dict.get("min")
-            max_val = spec_dict.get("max")
-            
-            if min_val is not None and value < min_val:
-                st.warning(f"{label}: Value {value} below minimum {min_val}")
-                return min_val
-            if max_val is not None and value > max_val:
-                st.warning(f"{label}: Value {value} above maximum {max_val}")
-                return max_val
-        return value
-    
-    # FIXED: Special handling for loan overrides with better suggestions
-    if param_name in ("LOAN_504_AMOUNT_OVERRIDE", "LOAN_7A_AMOUNT_OVERRIDE"):
-        try:
-            if param_name == "LOAN_504_AMOUNT_OVERRIDE":
-                # Calculate suggestion based on current CapEx
-                capex_items = params_state.get("CAPEX_ITEMS", []) or []
-                base_504 = 0.0
-                
-                for item in capex_items:
-                    if (item.get("enabled", True) and item.get("finance_504", True)):
-                        unit_cost = float(item.get("unit_cost", 0) or 0)
-                        count = float(item.get("count", 1) or 1)
-                        base_504 += unit_cost * count
-                
-                contingency = float(params_state.get("LOAN_CONTINGENCY_PCT", 0.08) or 0.0)
-                extra_504 = float(params_state.get("EXTRA_504_BUFFER", 0.0) or 0.0)
-                suggested = int(round(base_504 * (1.0 + contingency) + extra_504))
-                
-            else:  # LOAN_7A_AMOUNT_OVERRIDE
-                monthly_rent = float(params_state.get("RENT", 3500) or 0.0)
-                monthly_owner_draw = float(params_state.get("OWNER_DRAW", 2000) or 0.0)
-                monthly_insurance = float(params_state.get("INSURANCE_COST", 75) or 0.0)
-                monthly_base_opex = monthly_rent + monthly_owner_draw + monthly_insurance
-                runway_months = int(params_state.get("RUNWAY_MONTHS", 8) or 8)
-                extra_buffer = float(params_state.get("EXTRA_BUFFER", 10000) or 0.0)
-                suggested = int(round(monthly_base_opex * runway_months + extra_buffer))
-            
-            # Add suggestion to help text
-            desc = f"{desc} Current suggestion: ${suggested:,.0f}"
-            
-        except Exception as e:
-            print(f"Warning: Could not calculate loan suggestion for {param_name}: {e}")
-    
     # Create help text
     help_text = f"{desc}"
     if "min" in spec and "max" in spec:
         help_text += f" Range: {spec['min']}-{spec['max']}"
     
-    # Render appropriate widget with validation
-    try:
-        if param_type == "bool":
-            return st.checkbox(label, value=bool(current_value), help=help_text)
+    # Render appropriate widget
+    if param_type == "bool":
+        return st.checkbox(label, value=current_value, help=help_text)
+    
+    elif param_type == "int":
+        return st.slider(
+            label,
+            min_value=int(spec["min"]),
+            max_value=int(spec["max"]),
+            value=int(current_value),
+            step=int(spec.get("step", 1)),
+            help=help_text
+        )
+    
+    elif param_type == "float":
+        return st.slider(
+            label,
+            min_value=float(spec["min"]),
+            max_value=float(spec["max"]),
+            value=float(current_value),
+            step=float(spec.get("step", 0.01)),
+            help=help_text,
+            format="%.3f" if spec.get("step", 0.01) < 0.01 else "%.2f"
+        )
+    
+    elif param_type == "select":
+        options = spec["options"]
+        try:
+            current_index = options.index(current_value) if current_value in options else 0
+        except (ValueError, TypeError):
+            current_index = 0
         
-        elif param_type == "int":
-            value = st.slider(
-                label,
-                min_value=int(spec["min"]),
-                max_value=int(spec["max"]),
-                value=int(current_value),
-                step=int(spec.get("step", 1)),
-                help=help_text
-            )
-            return validate_numeric_input(value, spec)
-        
-        elif param_type == "float":
-            value = st.slider(
-                label,
-                min_value=float(spec["min"]),
-                max_value=float(spec["max"]),
-                value=float(current_value),
-                step=float(spec.get("step", 0.01)),
-                help=help_text,
-                format="%.3f" if spec.get("step", 0.01) < 0.01 else "%.2f"
-            )
-            return validate_numeric_input(value, spec)
-        
-        elif param_type == "select":
-            options = spec["options"]
-            try:
-                current_index = options.index(current_value) if current_value in options else 0
-            except (ValueError, TypeError):
-                current_index = 0
-            
-            return st.selectbox(
-                label,
-                options=options,
-                index=current_index,
-                help=help_text
-            )
-        
-        elif param_type == "text":
-            value = st.text_input(
-                label,
-                value=str(current_value),
-                help=help_text
-            )
-            # FIXED: Validate JSON inputs for events
-            if param_name in ("ATTENDEES_PER_EVENT_RANGE", "EVENT_MUG_COST_RANGE"):
-                try:
-                    json.loads(value)
-                except json.JSONDecodeError:
-                    st.error(f"Invalid JSON format for {label}")
-                    return str(current_value)  # Return previous valid value
-            return value
-        
-    except Exception as e:
-        st.error(f"Error rendering parameter {param_name}: {e}")
-        return current_value
+        return st.selectbox(
+            label,
+            options=options,
+            index=current_index,
+            help=help_text
+        )
+    
+    elif param_type == "text":
+        return st.text_input(
+            label,
+            value=str(current_value),
+            help=help_text
+        )
     
     return current_value
-
-def validate_parameter_combination(params_state: dict) -> List[str]:
-    """Validate parameter combinations and return list of error messages"""
-    errors = []
-    
-    # 1. Check member archetype probabilities sum to 1.0
-    archetype_keys = ["HOBBYIST_PROB", "COMMITTED_ARTIST_PROB", "PRODUCTION_POTTER_PROB", "SEASONAL_USER_PROB"]
-    if all(k in params_state for k in archetype_keys):
-        total_prob = sum(float(params_state[k]) for k in archetype_keys)
-        if abs(total_prob - 1.0) > 0.01:  # Allow small floating point errors
-            errors.append(f"Member archetype probabilities must sum to 1.0, currently sum to {total_prob:.3f}")
-    
-    # 2. Validate loan overrides are reasonable
-    rent = float(params_state.get("RENT", 3500))
-    override_504 = float(params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0))
-    override_7a = float(params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0))
-    
-    if override_504 > 0 and override_504 < 5000:
-        errors.append("SBA 504 loan override seems too small (minimum $5,000 typical)")
-    if override_7a > 0 and override_7a < 10000:
-        errors.append("SBA 7(a) loan override seems too small (minimum $10,000 typical)")
-    
-    # 3. Check simulation parameters are reasonable
-    months = int(params_state.get("MONTHS", 60))
-    sims = int(params_state.get("N_SIMULATIONS", 100))
-    
-    if months < 12:
-        errors.append("Simulation horizon should be at least 12 months")
-    if sims < 10:
-        errors.append("Need at least 10 simulations for reliable statistics")
-    if months * sims > 1000000:  # Prevent excessive runtime
-        errors.append(f"Simulation too large ({months} months × {sims} sims). Consider reducing for performance.")
-    
-    # 4. Validate capacity parameters
-    max_members = int(params_state.get("MAX_MEMBERS", 77))
-    wheels = int(params_state.get("WHEELS_CAPACITY", 8))
-    
-    if max_members > wheels * 15:  # Rule of thumb: ~15 members per wheel max
-        errors.append(f"Max members ({max_members}) may be too high for {wheels} wheels")
-    
-    # 5. Check pricing makes sense
-    price = float(params_state.get("PRICE", 175))
-    ref_price = float(params_state.get("REFERENCE_PRICE", 165))
-    
-    if price < 50:
-        errors.append("Membership price seems unrealistically low")
-    if price > 500:
-        errors.append("Membership price seems unrealistically high")
-    if abs(price - ref_price) > 100:
-        errors.append("Price and reference price are very different - check price elasticity assumptions")
-    
-    # 6. Validate equipment configuration
-    capex_items = params_state.get("CAPEX_ITEMS", [])
-    if capex_items:
-        for i, item in enumerate(capex_items):
-            if item.get("enabled", True):
-                unit_cost = item.get("unit_cost", 0)
-                count = item.get("count", 1)
-                if unit_cost <= 0 or count <= 0:
-                    errors.append(f"Equipment item {i+1} has invalid unit cost or count")
-    
-    # 7. Check JSON parameters
-    try:
-        attendees = params_state.get("ATTENDEES_PER_EVENT_RANGE", "[8, 10, 12]")
-        json.loads(attendees)
-    except (json.JSONDecodeError, TypeError):
-        errors.append("Event attendance range must be valid JSON")
-    
-    try:
-        mug_cost = params_state.get("EVENT_MUG_COST_RANGE", "[4.5, 7.5]")
-        json.loads(mug_cost)
-    except (json.JSONDecodeError, TypeError):
-        errors.append("Event mug cost range must be valid JSON")
-    
-    return errors
-
-def run_simulation_with_validation():
-    """Run simulation with pre-flight validation"""
-    
-    # Validate parameters before running
-    validation_errors = validate_parameter_combination(st.session_state.params_state)
-    
-    if validation_errors:
-        st.error("Parameter validation failed:")
-        for error in validation_errors:
-            st.error(f"• {error}")
-        st.info("Please fix the issues above before running the simulation.")
-        return
-    
-    # Clear any existing cache to ensure fresh run
-    try:
-        st.cache_data.clear()
-    except:
-        pass
-        
-    with st.spinner("Running Monte Carlo simulation..."):
-        try:
-            # Build overrides from UI state
-            overrides = build_complete_overrides(st.session_state.params_state)
-            
-            # Add equipment items
-            if "CAPEX_ITEMS" in st.session_state.params_state:
-                overrides["CAPEX_ITEMS"] = _normalize_capex_items(pd.DataFrame(st.session_state.params_state["CAPEX_ITEMS"]))
-            
-            # Add firing fee schedule
-            if "FIRING_FEE_SCHEDULE" in st.session_state.params_state:
-                overrides["FIRING_FEE_SCHEDULE"] = st.session_state.params_state["FIRING_FEE_SCHEDULE"]
-
-            # Run simulation with figure capture
-            with FigureCapture("User Defined Scenario") as cap:
-                results = run_original_once("modular_simulator.py", overrides)
-            
-            if isinstance(results, tuple):
-                df, eff = results
-            else:
-                df = results
-                eff = None
-            
-            if df is None or df.empty:
-                st.error("Simulation returned no results. Check parameter values and try again.")
-                return
-            
-            # Store results in session state
-            st.session_state["simulation_results"] = df
-            st.session_state["simulation_images"] = cap.images
-            st.session_state["simulation_manifest"] = cap.manifest
-            
-            # Display results
-            st.success(f"Simulation completed: {len(df)} result rows generated")
-            
-            # Key metrics
-            col1, col2, col3, col4 = st.columns(4)
-            
-            final_month = df["month"].max()
-            final_data = df[df["month"] == final_month]
-            
-            # Survival rate - check if any simulation went negative
-            survival_rate = (df.groupby("simulation_id")["cash_balance"].min() >= 0).mean()
-            
-            col1.metric("Survival Rate", f"{survival_rate:.1%}")
-            col2.metric("Median Final Cash", f"${final_data['cash_balance'].median():,.0f}")
-            
-            if "active_members" in df.columns:
-                col3.metric("Median Final Members", f"{final_data['active_members'].median():.0f}")
-            
-            if "dscr" in df.columns:
-                final_dscr = final_data["dscr"].replace([np.inf, -np.inf], np.nan)
-                col4.metric("Median Final DSCR", f"{final_dscr.median():.2f}")
-            
-        except Exception as e:
-            st.error(f"Simulation failed: {e}")
-            st.exception(e)
-            return
-
-# Add this call before running simulation (in the run_simulation section)
-# def run_simulation_with_validation():
-#     """Run simulation with pre-flight validation"""
-    
-#     # Validate parameters before running
-#     validation_errors = validate_parameter_combination(st.session_state.params_state)
-    
-#     if validation_errors:
-#         st.error("Parameter validation failed:")
-#         for error in validation_errors:
-#             st.error(f"• {error}")
-#         st.info("Please fix the issues above before running the simulation.")
-#         return
-    
-#     # Clear any existing cache to ensure fresh run
-#     try:
-#         st.cache_data.clear()
-#     except:
-#         pass
-        
-#     with st.spinner("Running Monte Carlo simulation..."):
-#         try:
-#             # Build overrides from UI state
-#             overrides = build_complete_overrides(st.session_state.params_state)
-            
-#             # Add equipment items
-#             if "CAPEX_ITEMS" in st.session_state.params_state:
-#                 overrides["CAPEX_ITEMS"] = _normalize_capex_items(pd.DataFrame(st.session_state.params_state["CAPEX_ITEMS"]))
-            
-#             # Add firing fee schedule
-#             if "FIRING_FEE_SCHEDULE" in st.session_state.params_state:
-#                 overrides["FIRING_FEE_SCHEDULE"] = st.session_state.params_state["FIRING_FEE_SCHEDULE"]
-
-#             # Run simulation with figure capture
-#             with FigureCapture("User Defined Scenario") as cap:
-#                 results = run_original_once("modular_simulator.py", overrides)
-            
-#             if isinstance(results, tuple):
-#                 df, eff = results
-#             else:
-#                 df = results
-#                 eff = None
-            
-#             if df is None or df.empty:
-#                 st.error("Simulation returned no results. Check parameter values and try again.")
-#                 return
-            
-#             # Store results in session state
-#             st.session_state["simulation_results"] = df
-#             st.session_state["simulation_images"] = cap.images
-#             st.session_state["simulation_manifest"] = cap.manifest
-            
-#             # Display results
-#             st.success(f"Simulation completed: {len(df)} result rows generated")
-            
-#             # Key metrics
-#             col1, col2, col3, col4 = st.columns(4)
-            
-#             final_month = df["month"].max()
-#             final_data = df[df["month"] == final_month]
-            
-#             # Survival rate - check if any simulation went negative
-#             survival_rate = (df.groupby("simulation_id")["cash_balance"].min() >= 0).mean()
-            
-#             col1.metric("Survival Rate", f"{survival_rate:.1%}")
-#             col2.metric("Median Final Cash", f"${final_data['cash_balance'].median():,.0f}")
-            
-#             if "active_members" in df.columns:
-#                 col3.metric("Median Final Members", f"{final_data['active_members'].median():.0f}")
-            
-#             if "dscr" in df.columns:
-#                 final_dscr = final_data["dscr"].replace([np.inf, -np.inf], np.nan)
-#                 col4.metric("Median Final DSCR", f"{final_dscr.median():.2f}")
-            
-#         except Exception as e:
-#             st.error(f"Simulation failed: {e}")
-#             st.exception(e)
-#             return
-
-
-# Add this call before running simulation (in the run_simulation section)
-def run_simulation_with_validation():
-    """Run simulation with pre-flight validation"""
-    
-    # Validate parameters before running
-    validation_errors = validate_parameter_combination(st.session_state.params_state)
-    
-    if validation_errors:
-        st.error("Parameter validation failed:")
-        for error in validation_errors:
-            st.error(f"• {error}")
-        st.info("Please fix the issues above before running the simulation.")
-        return
-    
-    # Clear any existing cache to ensure fresh run
-    try:
-        st.cache_data.clear()
-    except:
-        pass
-        
-    with st.spinner("Running Monte Carlo simulation..."):
-        try:
-            # Build overrides from UI state
-            overrides = build_complete_overrides(st.session_state.params_state)
-            
-            # Add equipment items
-            if "CAPEX_ITEMS" in st.session_state.params_state:
-                overrides["CAPEX_ITEMS"] = _normalize_capex_items(pd.DataFrame(st.session_state.params_state["CAPEX_ITEMS"]))
-            
-            # Add firing fee schedule
-            if "FIRING_FEE_SCHEDULE" in st.session_state.params_state:
-                overrides["FIRING_FEE_SCHEDULE"] = st.session_state.params_state["FIRING_FEE_SCHEDULE"]
-
-            # Run simulation with figure capture
-            with FigureCapture("User Defined Scenario") as cap:
-                results = run_original_once("modular_simulator.py", overrides)
-            
-            if isinstance(results, tuple):
-                df, eff = results
-            else:
-                df = results
-                eff = None
-            
-            if df is None or df.empty:
-                st.error("Simulation returned no results. Check parameter values and try again.")
-                return
-            
-            # Store results in session state
-            st.session_state["simulation_results"] = df
-            st.session_state["simulation_images"] = cap.images
-            st.session_state["simulation_manifest"] = cap.manifest
-            
-            # Display results
-            st.success(f"Simulation completed: {len(df)} result rows generated")
-            
-            # Key metrics
-            col1, col2, col3, col4 = st.columns(4)
-            
-            final_month = df["month"].max()
-            final_data = df[df["month"] == final_month]
-            
-            # Survival rate - check if any simulation went negative
-            survival_rate = (df.groupby("simulation_id")["cash_balance"].min() >= 0).mean()
-            
-            col1.metric("Survival Rate", f"{survival_rate:.1%}")
-            col2.metric("Median Final Cash", f"${final_data['cash_balance'].median():,.0f}")
-            
-            if "active_members" in df.columns:
-                col3.metric("Median Final Members", f"{final_data['active_members'].median():.0f}")
-            
-            if "dscr" in df.columns:
-                final_dscr = final_data["dscr"].replace([np.inf, -np.inf], np.nan)
-                col4.metric("Median Final DSCR", f"{final_dscr.median():.2f}")
-            
-        except Exception as e:
-            st.error(f"Simulation failed: {e}")
-            st.exception(e)
-            return
 
 def get_param_default(spec: dict) -> Any:
     """Get appropriate default value for parameter spec"""
@@ -2595,39 +2112,6 @@ def build_complete_overrides(params_state: dict) -> dict:
     for param in economic_params:
         if param in params_state:
             overrides[param] = params_state[param]
-
-    # ---------- Loan wiring: UI -> simulator globals ----------
-    # Forward core 7(a)/504 knobs so simulator doesn't use defaults
-    _loan_keys = [
-        "RUNWAY_MONTHS",
-        "LOAN_504_ANNUAL_RATE", "LOAN_504_TERM_YEARS", "IO_MONTHS_504",
-        "LOAN_7A_ANNUAL_RATE",  "LOAN_7A_TERM_YEARS",  "IO_MONTHS_7A",
-        "LOAN_CONTINGENCY_PCT", "EXTRA_BUFFER",
-        "FEES_UPFRONT_PCT_7A", "FEES_UPFRONT_PCT_504",
-        "FEES_PACKAGING", "FEES_CLOSING",
-        "FINANCE_FEES_7A", "FINANCE_FEES_504",
-        "RESERVE_FLOOR",
-    ]
-    for k in _loan_keys:
-        if k in params_state:
-            overrides[k] = params_state[k]
-
-    # Map UI principal overrides to simulator names
-    # UI: LOAN_504_AMOUNT_OVERRIDE / LOAN_7A_AMOUNT_OVERRIDE
-    # SIM: LOAN_OVERRIDE_504 / LOAN_OVERRIDE_7A
-    try:
-        ov504 = float(params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0) or 0)
-        if ov504 > 0:
-            overrides["LOAN_OVERRIDE_504"] = ov504
-    except Exception:
-        pass
-    try:
-        ov7a = float(params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0) or 0)
-        if ov7a > 0:
-            overrides["LOAN_OVERRIDE_7A"] = ov7a
-    except Exception:
-        pass
-
     
     # Scenario config wrapper (required by simulator)
     grant_amount = params_state.get("grant_amount", 0.0)
@@ -2703,58 +2187,8 @@ def render_complete_ui():
                 st.session_state.params_state = render_parameter_group(
                     group_name, group_info, st.session_state.params_state
                 )
-                # Financing group convenience actions
-                if group_name == "financing":
-                    st.caption("Tip: Click below to refresh the 504 and 7(a) fields with current suggestions.")
-                    if st.button("Reset loan asks to suggestions", key="btn_reset_loan_suggestions"):
-                        st.session_state.params_state["LOAN_504_AMOUNT_OVERRIDE"] = 0.0
-                        st.session_state.params_state["LOAN_7A_AMOUNT_OVERRIDE"] = 0.0
-                        st.experimental_rerun()
     
     # Equipment configuration (special handling)
-    with st.expander("🔧 Staff payroll Expenditures", expanded=False):
-        st.markdown("**Staff hiring schedule**")
-        st.caption("Define when staff are hired, their compensation, and duration of employment.")
-        
-        # Default staff configuration
-        default_staff = [
-            {"enabled": False, "role": "Part-time Assistant", "start_month": 6, "end_month": None, "hourly_rate": 18.0, "hours_per_week": 20, "trigger_members": None},
-            {"enabled": False, "role": "Studio Manager", "start_month": 12, "end_month": None, "hourly_rate": 25.0, "hours_per_week": 30, "trigger_members": None},
-            {"enabled": False, "role": "Evening Instructor", "start_month": None, "end_month": None, "hourly_rate": 30.0, "hours_per_week": 15, "trigger_members": 50},
-        ]
-        
-        if "STAFF_SCHEDULE" not in st.session_state.params_state:
-            st.session_state.params_state["STAFF_SCHEDULE"] = default_staff
-        
-        staff_df = pd.DataFrame(st.session_state.params_state["STAFF_SCHEDULE"])
-        
-        edited_staff = st.data_editor(
-            staff_df,
-            num_rows="dynamic",
-            use_container_width=True,
-            column_config={
-                "enabled": st.column_config.CheckboxColumn("Include", help="Whether this staff position is filled"),
-                "role": st.column_config.TextColumn("Role/Title", help="Staff position description"),
-                "start_month": st.column_config.NumberColumn("Start Month", min_value=0, step=1, help="Month to hire (0=immediate, leave blank for member-triggered)"),
-                "end_month": st.column_config.NumberColumn("End Month", min_value=1, step=1, help="Last month of employment (blank=permanent through forecast)"),
-                "hourly_rate": st.column_config.NumberColumn("Hourly Rate ($)", min_value=10.0, step=0.50, help="Hourly compensation including taxes/benefits"),
-                "hours_per_week": st.column_config.NumberColumn("Hours/Week", min_value=1.0, step=1.0, help="Average hours worked per week"),
-                "trigger_members": st.column_config.NumberColumn("Member Trigger", min_value=0, step=1, help="Member count to trigger hiring (blank for month-based)")
-            }
-        )
-        
-        st.session_state.params_state["STAFF_SCHEDULE"] = edited_staff.to_dict("records")
-        
-        # Show calculated monthly costs
-        if len(edited_staff) > 0:
-            enabled_staff = edited_staff[edited_staff.get("enabled", False) == True]
-            if len(enabled_staff) > 0:
-                total_monthly_cost = sum(
-                    (row.get("hourly_rate", 0) * row.get("hours_per_week", 0) * 52 / 12)
-                    for _, row in enabled_staff.iterrows()
-                )
-                st.info(f"Total monthly staff cost when all enabled positions are active: ${total_monthly_cost:,.0f}")
-    
     with st.expander("🔧 Equipment & Capital Expenditures", expanded=False):
         st.markdown("**Equipment purchase schedule**")
         st.caption("Define when equipment is purchased (by month or member count) and whether it's financed through SBA 504 loans.")
@@ -2762,13 +2196,13 @@ def render_complete_ui():
         # Default equipment configuration
         default_capex = [
             {"enabled": True,  "label": "Kiln #1 Skutt 1227", "count": 1,  "unit_cost": 7000, "month": 0,    "member_threshold": None, "finance_504": True},
-            {"enabled": True,  "label": "Pottery Wheels",     "count": 12,  "unit_cost": 3000,  "month": 0,    "member_threshold": None, "finance_504": True},
+            {"enabled": True,  "label": "Pottery Wheels",     "count": 4,  "unit_cost": 800,  "month": 0,    "member_threshold": None, "finance_504": True},
             {"enabled": True,  "label": "Wire Racks",         "count": 10, "unit_cost": 100,  "month": 0,    "member_threshold": None, "finance_504": True},
-            {"enabled": True,  "label": "Clay Traps",         "count": 1,  "unit_cost": 200,  "month": 0,    "member_threshold": None, "finance_504": True},
-            {"enabled": False, "label": "Kiln #2 Skutt 1427", "count": 1,  "unit_cost": 9000, "month": 0,    "member_threshold": None, "finance_504": True},
+            {"enabled": True,  "label": "Clay Traps",         "count": 1,  "unit_cost": 400,  "month": 0,    "member_threshold": None, "finance_504": True},
+            {"enabled": False, "label": "Kiln #2 Skutt 1427", "count": 1,  "unit_cost": 9000, "month": 6,    "member_threshold": None, "finance_504": True},
             {"enabled": False, "label": "Slab Roller",        "count": 1,  "unit_cost": 3000, "month": None, "member_threshold": 50,   "finance_504": True},
             {"enabled": False, "label": "Pug Mill",           "count": 1,  "unit_cost": 4500, "month": None, "member_threshold": 75,   "finance_504": True},
-        ]
+         ]
         
         if "CAPEX_ITEMS" not in st.session_state.params_state:
             st.session_state.params_state["CAPEX_ITEMS"] = default_capex
@@ -2785,68 +2219,14 @@ def render_complete_ui():
                 "label": st.column_config.TextColumn("Equipment", help="Equipment description"),
                 "count": st.column_config.NumberColumn("Quantity", min_value=1, step=1, help="Number of units"),
                 "unit_cost": st.column_config.NumberColumn("Unit Cost ($)", min_value=0, step=100, help="Cost per unit"),
-                "month": st.column_config.NumberColumn("Trigger Month", min_value=0, step=1, help="Month to purchase (0=immediate, leave blank for member-based trigger)"),
-                "member_threshold": st.column_config.NumberColumn("Member Threshold", min_value=0, step=1, help="Member count to trigger purchase (leave blank for month-based trigger)"),
+                "month": st.column_config.NumberColumn("Trigger Month", min_value=0, step=1, help="Month to purchase (0=immediate, leave blank for member-based)"),
+                "member_threshold": st.column_config.NumberColumn("Member Threshold", min_value=0, step=1, help="Member count to trigger purchase (leave blank for month-based)"),
                 "finance_504": st.column_config.CheckboxColumn("SBA 504", help="Finance through SBA 504 loan")
             }
         )
         
-        
         # Update session state
         st.session_state.params_state["CAPEX_ITEMS"] = edited_df.to_dict("records")
-
-
-        # Validate equipment configuration
-        try:
-            edited_records = edited_df.to_dict("records")
-            validation_errors = []
-            
-            for i, item in enumerate(edited_records):
-                if item.get("enabled", False):
-                    # Check required fields
-                    if not item.get("label", "").strip():
-                        validation_errors.append(f"Row {i+1}: Equipment label is required")
-                    
-                    unit_cost = item.get("unit_cost", 0)
-                    count = item.get("count", 0)
-                    
-                    try:
-                        unit_cost = float(unit_cost) if unit_cost is not None else 0
-                        count = int(count) if count is not None else 0
-                    except (ValueError, TypeError):
-                        validation_errors.append(f"Row {i+1}: Invalid unit cost or count")
-                        continue
-                    
-                    if unit_cost <= 0:
-                        validation_errors.append(f"Row {i+1}: Unit cost must be greater than 0")
-                    if count <= 0:
-                        validation_errors.append(f"Row {i+1}: Count must be greater than 0")
-                    
-                    # Check trigger logic
-                    month = item.get("month")
-                    threshold = item.get("member_threshold")
-                    
-                    if month is None and threshold is None:
-                        validation_errors.append(f"Row {i+1}: Must specify either trigger month or member threshold")
-                    elif month is not None and threshold is not None:
-                        validation_errors.append(f"Row {i+1}: Cannot specify both trigger month and member threshold")
-            
-            if validation_errors:
-                st.error("Equipment configuration errors:")
-                for error in validation_errors:
-                    st.error(f"• {error}")
-            else:
-                # Update session state only if validation passes
-                st.session_state.params_state["CAPEX_ITEMS"] = edited_records
-                
-        except Exception as e:
-            st.error(f"Error validating equipment configuration: {e}")
-            # Keep existing state if validation fails
-
-
-
-
-
 
     # Firing fee schedule (special handling)
     with st.expander("🔥 Firing Fee Schedule (per-lb tiers)", expanded=False):
@@ -2923,10 +2303,74 @@ def render_complete_ui():
 
         run_simulation = st.form_submit_button("🚀 Run Simulation", type="primary")
     
-
-   # Run simulation
+    # Run simulation
     if run_simulation:
-        run_simulation_with_validation()
+        # Clear any existing cache to ensure fresh run
+        try:
+            st.cache_data.clear()
+        except:
+            pass
+            
+        with st.spinner("Running Monte Carlo simulation..."):
+            try:
+                # Build overrides from UI state
+                overrides = build_complete_overrides(st.session_state.params_state)
+                
+                # Add equipment items
+                if "CAPEX_ITEMS" in st.session_state.params_state:
+                    overrides["CAPEX_ITEMS"] = _normalize_capex_items(pd.DataFrame(st.session_state.params_state["CAPEX_ITEMS"]))
+                
+                # Add firing fee schedule
+                if "FIRING_FEE_SCHEDULE" in st.session_state.params_state:
+                    # Pass as a native list of dicts; simulator also supports JSON string
+                    import json as _json  # available for any future JSON encoding
+                    overrides["FIRING_FEE_SCHEDULE"] = st.session_state.params_state["FIRING_FEE_SCHEDULE"]
+
+                # Run simulation with figure capture
+                with FigureCapture("User Defined Scenario") as cap:
+                    results = run_original_once("modular_simulator.py", overrides)
+                
+                if isinstance(results, tuple):
+                    df, eff = results
+                else:
+                    df = results
+                    eff = None
+                
+                if df is None or df.empty:
+                    st.error("Simulation returned no results. Check parameter values and try again.")
+                    return
+                
+                # Store results in session state
+                st.session_state["simulation_results"] = df
+                st.session_state["simulation_images"] = cap.images
+                st.session_state["simulation_manifest"] = cap.manifest
+                
+                # Display results
+                st.success(f"Simulation completed: {len(df)} result rows generated")
+                
+                # Key metrics
+                col1, col2, col3, col4 = st.columns(4)
+                
+                final_month = df["month"].max()
+                final_data = df[df["month"] == final_month]
+                
+                # Survival rate - check if any simulation went negative
+                survival_rate = (df.groupby("simulation_id")["cash_balance"].min() >= 0).mean()
+                
+                col1.metric("Survival Rate", f"{survival_rate:.1%}")
+                col2.metric("Median Final Cash", f"${final_data['cash_balance'].median():,.0f}")
+                
+                if "active_members" in df.columns:
+                    col3.metric("Median Final Members", f"{final_data['active_members'].median():.0f}")
+                
+                if "dscr" in df.columns:
+                    final_dscr = final_data["dscr"].replace([np.inf, -np.inf], np.nan)
+                    col4.metric("Median Final DSCR", f"{final_dscr.median():.2f}")
+                
+            except Exception as e:
+                st.error(f"Simulation failed: {e}")
+                st.exception(e)
+                return
     
     # Display results if available
     if "simulation_results" in st.session_state:
@@ -2964,61 +2408,7 @@ def render_complete_ui():
                     mime="application/zip"
                 )
         
-        # Enhanced Loan Amount Displays
-        with st.expander("💰 Loan Amount Summary", expanded=True):
-            # --- NEW: ensure loan metrics exist in this scope
-            params_state = st.session_state.params_state
-            loan_metrics = calculate_loan_metrics(df, params_state)
-
-            # --- NEW: prefill session with calculated values, but allow overrides
-            calc_504 = int(loan_metrics.get("total_504_amount", 0) or 0)
-            calc_7a  = int(loan_metrics.get("total_7a_amount", 0) or 0)
-            # Effective principals used in results: override if >0 else suggestion
-            override_504 = int(params_state.get("LOAN_504_AMOUNT_OVERRIDE", 0) or 0)
-            override_7a  = int(params_state.get("LOAN_7A_AMOUNT_OVERRIDE", 0) or 0)
-            used_504 = override_504 if override_504 > 0 else calc_504
-            used_7a  = override_7a  if override_7a  > 0 else calc_7a
-
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.subheader("SBA 504 Loan (CapEx)")
-                # READ-ONLY display of the amount used (no +/- spinner)
-                st.caption("SBA 504 Total Loan Ask ($)")
-                st.markdown(f"### ${used_504:,.0f}")
-                st.metric(
-                    "Used Loan Amount (Override)" if override_504 > 0 else "Used Loan Amount (Auto-calc)",
-                    f"${used_504:,.0f}"
-                )
-                st.metric("Interest-Only Payment", f"${loan_metrics['io_payment_504']:,.0f}/month")
-                st.metric("Amortizing Payment", f"${loan_metrics['amort_payment_504']:,.0f}/month")
-            
-            with col2:
-                st.subheader("SBA 7(a) Loan (OpEx)")
-                # READ-ONLY display of the amount used (no +/- spinner)
-                st.caption("SBA 7(a) Total Loan Ask ($)")
-                st.markdown(f"### ${used_7a:,.0f}")
-                st.metric(
-                    "Used Loan Amount (Override)" if override_7a > 0 else "Used Loan Amount (Auto-calc)",
-                    f"${used_7a:,.0f}"
-                )
-                st.metric("Interest-Only Payment", f"${loan_metrics['io_payment_7a']:,.0f}/month")
-                st.metric("Amortizing Payment", f"${loan_metrics['amort_payment_7a']:,.0f}/month")
-            
-            
-            # Keep legacy variable names for code below
-            total_504 = used_504
-            total_7a  = used_7a
-
-            # Total debt service
-            st.subheader("Combined Debt Service")
-            total_io = loan_metrics['io_payment_504'] + loan_metrics['io_payment_7a']
-            total_amort = loan_metrics['amort_payment_504'] + loan_metrics['amort_payment_7a']
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Debt", f"${total_504 + total_7a:,.0f}")
-            col2.metric("IO Period Payment", f"${total_io:,.0f}/month")
-            col3.metric("Amortizing Payment", f"${total_amort:,.0f}/month")
+        # Summary statistics table
         st.header("📈 Detailed Results")
         
         # Compute key statistics by simulation
@@ -3068,13 +2458,12 @@ def render_complete_ui():
                 st.metric("50th Percentile Breakeven", f"{be_months.quantile(0.5):.0f} months" if len(be_months) > 0 else "Never")
                 st.metric("90th Percentile Breakeven", f"{be_months.quantile(0.9):.0f} months" if len(be_months) > 0 else "Never")
         
-        # Enhanced Loan Analysis Section (with error boundary)
+        # Enhanced Loan Analysis Section
         try:
             render_loan_analysis(df, st.session_state.params_state)
         except Exception as e:
             st.warning(f"Loan analysis charts could not be generated: {e}")
             st.info("Basic simulation results are still available, but loan analysis charts may not display properly.")
-            
             # Still show basic loan metrics without charts
             st.subheader("Basic Loan Information")
             try:
@@ -3084,10 +2473,9 @@ def render_complete_ui():
                     st.metric("Estimated SBA 504 Loan", f"${loan_metrics['total_504_amount']:,.0f}")
                 with col2:
                     st.metric("Estimated SBA 7(a) Loan", f"${loan_metrics['total_7a_amount']:,.0f}")
-            except Exception as inner_e:
-                st.error(f"Could not calculate basic loan metrics: {inner_e}")
-                st.info("Please check your parameter values and try again.")
-                
+            except:
+                pass
+        
         # Raw data download and display
         st.subheader("Raw Simulation Data")
         
