@@ -1107,7 +1107,7 @@ COMPLETE_PARAM_SPECS = {
         "group": "simulation"
     },
     "N_SIMULATIONS": {
-        "type": "int", "min": 10, "max": 1000, "step": 10, "default": 100,
+        "type": "int", "min": 10, "max": 300, "step": 10, "default": 100,
         "label": "Number of Simulations",
         "desc": "Monte Carlo simulations to run. More = better statistics but longer runtime. 100+ recommended for reliable percentiles.",
         "group": "simulation"
