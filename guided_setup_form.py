@@ -100,18 +100,25 @@ def guided_setup_form(params_state: Dict[str, Any]) -> Dict[str, Any]:
     with st.form("guided_setup_form", clear_on_submit=False):
         st.subheader("✨ Guided Setup (one page)")
         st.caption("Defaults are pre-filled from your current model.")
+        st.info(
+            "This page sets the **big knobs** for your studio. "
+            "**504** is for equipment/build-out (CapEx). **7(a)** is for operating runway (OpEx). "
+            "You can refine details later in the Advanced sections."
+        )
 
         # ---- Space & Rent ----
         c1, c2 = st.columns(2)
         with c1:
             space_sqft = st.number_input(
                 "Studio size (sq ft)", 200, 20000,
-                int(_get(params_state, "SPACE_SQFT", 2000)), step=50
+                int(_get(params_state, "SPACE_SQFT", 2000)), step=50,
+                help="Total usable space for members/classes. Used for capacity planning and cost per sq ft views."
             )
         with c2:
             rent = st.number_input(
                 "Monthly rent ($/mo)", 200, 50000,
-                int(_get(params_state, "RENT", 3000)), step=100
+                int(_get(params_state, "RENT", 3000)), step=100,
+                help="Base monthly rent. If you don’t model utilities/CAM separately yet, include them here."
             )
 
         # ---- Membership ----
@@ -119,73 +126,88 @@ def guided_setup_form(params_state: Dict[str, Any]) -> Dict[str, Any]:
         with c3:
             max_members = st.number_input(
                 "Max members (capacity)", 1, 500,
-                int(_get(params_state, "MAX_MEMBERS", 30)), step=5
+                int(_get(params_state, "MAX_MEMBERS", 30)), step=5,
+                help="Upper limit of active members your studio can support. The simulator won’t exceed this ceiling."
             )
         with c4:
             member_fee = st.number_input(
                 "Membership fee ($/month)", 20.0, 1000.0,
                 float(_get(params_state, "MEMBERSHIP_FEE",
                            _get(params_state, "MEMBERSHIP_PRICE", 225.0))),
-                step=5.0
+                step=5.0, help="Monthly price charged per member. Written to both MEMBERSHIP_FEE and MEMBERSHIP_PRICE for compatibility."
             )
 
         # ---- Equipment ----
         equip_pack = st.selectbox(
-            "Equipment pack", ["Starter","Growth","Full"], index=0
+            "Equipment pack",
+            ["Starter","Growth","Full"],
+            index=["Starter","Growth","Full"].index(
+                params_state.get("EQUIP_PACK", "Starter")
+            ),
+            help="Sets quantities for wheels, kilns, racks, etc. These flow into CapEx and are 504-financeable by default. You can fine-tune later."
         )
 
         # ---- Owner draw ----
         owner_draw = st.number_input(
             "Owner draw ($/mo)", 0, 20000,
-            int(_get(params_state, "OWNER_DRAW", 0)), step=250
+            int(_get(params_state, "OWNER_DRAW", 0)), step=100,
+            help="Monthly pay you take from the business. Affects cash flow and DSCR."
         )
 
         # ---- Events ----
         events_per_month = st.number_input(
-            "Events per month", 0, 30,
-            int(_get(params_state, "EVENTS_PER_MONTH", 2)), step=1
+            "Events per month", 0, 20,
+            int(_get(params_state, "BASE_EVENTS_PER_MONTH_LAMBDA", 2)), step=1,
+            help="Average events hosted each month (e.g., Make-Your-Own-Mug). Drives event revenue and staffing."
         )
         event_price = st.number_input(
-            "Event price ($)", 0.0, 500.0,
-            float(_get(params_state, "EVENT_PRICE",
-                       _get(params_state, "EVENT_TICKET_PRICE", 90.0))),
-            step=5.0
+            "Ticket price ($)", 20, 500,
+            int(_get(params_state, "TICKET_PRICE", 85)), step=5,
+            help="Price per attendee for an event."
         )
         event_size = st.number_input(
-            "Avg participants / event", 0, 40,
-            int(_get(params_state, "EVENT_SIZE", 10)), step=1
+            "Attendees per event", 4, 24,
+            int(_get(params_state, "ATTENDEES_PER_EVENT_RANGE", [8,12])[1]), step=1,
+            help="Typical group size you plan for. Actual attendance may vary if the simulator uses a range."
         )
 
         # ---- Clay & firing ----
         clay_price = st.number_input(
-            "Clay price ($/lb)", 0.0, 10.0,
-            float(_get(params_state, "CLAY_PRICE_PER_LB", 1.50)), step=0.1
+            "Consumables per person ($)", 0, 100,
+            int(_get(params_state, "EVENT_CONSUMABLES_PER_PERSON", 10)), step=1,
+            help="Average consumables cost per attendee (clay, glaze, firing share)."
         )
         firing_fee = st.number_input(
-            "Firing fee ($/lb)", 0.0, 10.0,
-            float(_get(params_state, "FIRING_FEE_PER_LB", 1.00)), step=0.1
+            "Staff hours per event", 0, 16,
+            int(_get(params_state, "EVENT_HOURS_PER_EVENT", 3)), step=1,
+            help="Total paid staff time required for one event (setup, teaching, cleanup)."
         )
 
         # ---- Loans ----
         term_504 = st.selectbox(
             "504 loan term (years)", [10, 20, 25],
-            index=[10,20,25].index(int(_get(params_state, "LOAN_504_TERM_YEARS", 25)))
+            index=[10,20,25].index(int(_get(params_state, "LOAN_504_TERM_YEARS", 25))),
+            help="SBA 504 funds **CapEx** (equipment/build-out). Longer terms lower the monthly payment."
         )
         io_504 = st.number_input(
             "504 interest-only months", 0, 24,
-            int(_get(params_state, "IO_MONTHS_504", 6)), step=1
+            int(_get(params_state, "IO_MONTHS_504", 6)), step=1,
+            help="Months at the start where you pay **interest only**. Lowers early cash burn; increases total interest paid."
         )
         term_7a = st.selectbox(
             "7(a) loan term (years)", [5, 7, 10, 15, 25],
-            index=[5,7,10,15,25].index(int(_get(params_state, "LOAN_7A_TERM_YEARS", 10)))
+            index=[5,7,10,15,25].index(int(_get(params_state, "LOAN_7A_TERM_YEARS", 10))),
+            help="SBA 7(a) funds **OpEx runway**. Longer terms lower the monthly payment."
         )
         io_7a = st.number_input(
             "7(a) interest-only months", 0, 24,
-            int(_get(params_state, "IO_MONTHS_7A", 6)), step=1
+            int(_get(params_state, "IO_MONTHS_7A", 6)), step=1,
+            help="Months at the start where you pay **interest only** for 7(a). Helps early cash flow; increases total interest."
         )
         runway_months = st.number_input(
             "Operating runway months (7a sizing)", 0, 24,
-            int(_get(params_state, "RUNWAY_MONTHS", 6)), step=1
+            int(_get(params_state, "RUNWAY_MONTHS", 6)), step=1,
+            help="How many months of operating expenses you want 7(a) to cover. **Directly scales the 7(a) loan size.**"
         )
 
         submitted = st.form_submit_button("Submit Guided Setup", type="primary")
