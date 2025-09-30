@@ -191,9 +191,17 @@ def guided_setup_form(params_state: Dict[str, Any]) -> Dict[str, Any]:
         
         c9, c10 = st.columns(2)
         with c9:
+            # Safe lookup for 504 term
+            current_504 = int(_get(params_state, "LOAN_504_TERM_YEARS", 5))
+            term_504_options = [5, 7, 10]
+            try:
+                term_504_index = term_504_options.index(current_504)
+            except ValueError:
+                term_504_index = 0  # default to first option if current value not in list
+            
             term_504 = st.selectbox(
-                "504 loan term (years)", [5, 7, 10],
-                index=[5,7,10].index(int(_get(params_state, "LOAN_504_TERM_YEARS", 7))),
+                "504 loan term (years)", term_504_options,
+                index=term_504_index,
                 help="SBA 504 funds **CapEx** (equipment/build-out). Longer terms lower the monthly payment."
             )
         with c10:
@@ -205,9 +213,17 @@ def guided_setup_form(params_state: Dict[str, Any]) -> Dict[str, Any]:
         
         c11, c12 = st.columns(2)
         with c11:
+            # Safe lookup for 7a term
+            current_7a = int(_get(params_state, "LOAN_7A_TERM_YEARS", 7))
+            term_7a_options = [5, 7, 10, 15, 25]
+            try:
+                term_7a_index = term_7a_options.index(current_7a)
+            except ValueError:
+                term_7a_index = 1  # default to second option (7 years) if current value not in list
+            
             term_7a = st.selectbox(
-                "7(a) loan term (years)", [5, 7, 10, 15, 25],
-                index=[5,7,10,15,25].index(int(_get(params_state, "LOAN_7A_TERM_YEARS", 10))),
+                "7(a) loan term (years)", term_7a_options,
+                index=term_7a_index,
                 help="SBA 7(a) funds **OpEx runway**. Longer terms lower the monthly payment."
             )
         with c12:
@@ -222,9 +238,8 @@ def guided_setup_form(params_state: Dict[str, Any]) -> Dict[str, Any]:
             int(_get(params_state, "RUNWAY_MONTHS", 6)), step=1,
             help="How many months of operating expenses you want 7(a) to cover. **Directly scales the 7(a) loan size.**"
         )
-
+        
         submitted = st.form_submit_button("Submit Guided Setup", type="primary")
-
     # ---- Apply values on submit ----
     if submitted:
         ps = dict(params_state)
