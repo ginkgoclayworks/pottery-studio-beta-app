@@ -2652,6 +2652,16 @@ def render_complete_ui():
     st.set_page_config(page_title="GCWS Complete Scenario Planner", layout="wide")
     st.title("🏺 Ginkgo Clayworks Studio - Complete Scenario Planner")
     
+    # Mode selector
+    mode = st.radio(
+        "Choose your experience:",
+        ["Quick Start (Recommended)", "Advanced Configuration"],
+        horizontal=True,
+        help="Quick Start uses guided setup with sensible defaults. Advanced gives full control."
+    )
+    
+    is_quick_start = (mode == "Quick Start (Recommended)")
+    
     # Warning banner
     st.error("""
     ⚠️ **SCENARIO PLANNING TOOL - NOT PREDICTIVE**
@@ -2668,13 +2678,25 @@ def render_complete_ui():
             st.session_state.params_state[param_name] = spec.get("default", get_param_default(spec))
     
     # --- Guided Setup block (one page form) ---
-    with st.expander("✨ Guided Setup (recommended)", expanded=True):
+    if is_quick_start:
+        # In Quick Start mode, show guided setup prominently
         st.session_state.params_state = guided_setup_form(st.session_state.params_state)
-        st.markdown("---")
+        
+        # Auto-run simulation after guided setup if parameters were just set
+        if st.session_state.params_state.get("_guided_setup_complete"):
+            st.session_state.params_state["_guided_setup_complete"] = False
+            with st.spinner("Running simulation with your settings..."):
+                run_simulation_with_validation()
+    else:
+        # In Advanced mode, show guided setup as optional
+        with st.expander("✨ Guided Setup (optional)", expanded=False):
+            st.session_state.params_state = guided_setup_form(st.session_state.params_state)
+            st.markdown("---")
     
     # Main parameter interface
-    st.header("Parameter Configuration")
-    st.markdown("Each parameter includes a tooltip explaining its impact on the model. Adjust values based on your specific situation and market research.")
+    if not is_quick_start:
+        st.header("Parameter Configuration")
+        st.markdown("Each parameter includes a tooltip explaining its impact on the model. Adjust values based on your specific situation and market research.")
     
     selected_groups = list(PARAMETER_GROUPS.keys())
     # Render selected parameter groups

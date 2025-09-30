@@ -241,7 +241,7 @@ def guided_setup_form(params_state: Dict[str, Any]) -> Dict[str, Any]:
 
         templ = _capex_pack_template(equip_pack)
         ps["CAPEX_ITEMS"] = _merge_capex(ps.get("CAPEX_ITEMS"), templ)
-
+        ps["_guided_setup_complete"] = True  # Flag for auto-run
         st.success("Guided setup applied. You can still edit details in Advanced sections.")
         return ps
 
