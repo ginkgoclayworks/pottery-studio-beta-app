@@ -192,8 +192,8 @@ def guided_setup_form(params_state: Dict[str, Any]) -> Dict[str, Any]:
         c9, c10 = st.columns(2)
         with c9:
             term_504 = st.selectbox(
-                "504 loan term (years)", [10, 20, 25],
-                index=[10,20,25].index(int(_get(params_state, "LOAN_504_TERM_YEARS", 25))),
+                "504 loan term (years)", [5, 7, 10],
+                index=[5,7,10].index(int(_get(params_state, "LOAN_504_TERM_YEARS", 25))),
                 help="SBA 504 funds **CapEx** (equipment/build-out). Longer terms lower the monthly payment."
             )
         with c10:
